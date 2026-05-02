@@ -1,0 +1,28 @@
+server:
+  port: 8099
+
+monitor:
+  interval: 30s
+  services:
+    - name: app-one
+      processMatch: "app-one.jar"
+      healthUrl: "http://127.0.0.1:8081/actuator/health"
+      healthTimeout: 3s
+      restartCooldown: 60s
+      restartWindow: 10m
+      maxRestartsInWindow: 3
+      restartCommand: >
+        nohup java -jar /opt/apps/app-one.jar
+        --server.port=8081
+        >> /var/log/app-one.log 2>&1 &
+
+    - name: app-two
+      processMatch: "app-two.jar"
+      restartCooldown: 60s
+      restartWindow: 10m
+      maxRestartsInWindow: 3
+      restartCommand: >
+        cd /opt/apps &&
+        nohup java -Xms256m -Xmx512m -jar app-two.jar
+        --spring.profiles.active=prod
+        >> /var/log/app-two.log 2>&1 &
