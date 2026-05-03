@@ -1,9 +1,9 @@
 package com.example.guardian.service;
 
+import com.example.guardian.model.HostConfig;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.List;
 
 /**
  * Компонент для проверки наличия процесса на Linux-хосте.
@@ -16,26 +16,28 @@ import java.util.List;
 @Component
 public class LinuxProcessInspector {
 
-    private final CommandExecutor commandExecutor;
+    private final HostShellExecutor hostShellExecutor;
 
     /**
      * Создает инспектор процессов.
      *
-     * @param commandExecutor низкоуровневый исполнитель shell-команд
+     * @param hostShellExecutor исполнитель shell-команд на целевых хостах
      */
-    public LinuxProcessInspector(CommandExecutor commandExecutor) {
-        this.commandExecutor = commandExecutor;
+    public LinuxProcessInspector(HostShellExecutor hostShellExecutor) {
+        this.hostShellExecutor = hostShellExecutor;
     }
 
     /**
      * Проверяет, существует ли в системе процесс, соответствующий заданному шаблону.
      *
+     * @param host хост, на котором нужно искать процесс
      * @param processMatch строка поиска для команды {@code pgrep -af}
      * @return {@code true}, если найден хотя бы один подходящий процесс; иначе {@code false}
      */
-    public boolean isRunning(String processMatch) {
-        CommandExecutor.CommandResult result = commandExecutor.execute(
-                List.of("bash", "-lc", "pgrep -af \"" + escape(processMatch) + "\""),
+    public boolean isRunning(HostConfig host, String processMatch) {
+        CommandExecutor.CommandResult result = hostShellExecutor.execute(
+                host,
+                "pgrep -af \"" + escape(processMatch) + "\"",
                 Duration.ofSeconds(5)
         );
 
