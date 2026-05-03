@@ -20,10 +20,26 @@ public class HostShellExecutor {
 
     private final CommandExecutor commandExecutor;
 
+    /**
+     * Creates a host-aware shell command executor.
+     *
+     * @param commandExecutor low-level command execution component
+     */
     public HostShellExecutor(CommandExecutor commandExecutor) {
         this.commandExecutor = commandExecutor;
     }
 
+    /**
+     * Executes a shell command on the configured host.
+     *
+     * <p>Local hosts run through {@code bash -lc}; remote hosts run through the
+     * system SSH client with non-interactive options and optional key authentication.
+     *
+     * @param host target host configuration
+     * @param shellCommand shell command to execute
+     * @param timeout maximum execution time
+     * @return structured command execution result
+     */
     public CommandExecutor.CommandResult execute(HostConfig host, String shellCommand, Duration timeout) {
         if (host.isLocal()) {
             return commandExecutor.execute(List.of("bash", "-lc", shellCommand), timeout);
@@ -48,6 +64,12 @@ public class HostShellExecutor {
         return commandExecutor.execute(command, timeout);
     }
 
+    /**
+     * Quotes a value so it can be passed as a single shell argument.
+     *
+     * @param value raw shell argument value
+     * @return safely single-quoted shell argument
+     */
     private String shellQuote(String value) {
         return "'" + value.replace("'", "'\"'\"'") + "'";
     }

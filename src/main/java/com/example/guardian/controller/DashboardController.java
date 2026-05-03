@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * REST controller that exposes the dashboard aggregate view.
+ */
 @RestController
 @RequestMapping("/api/dashboard")
 public class DashboardController {
@@ -25,6 +28,13 @@ public class DashboardController {
     private final ServiceMonitor serviceMonitor;
     private final ApiMapper apiMapper;
 
+    /**
+     * Creates a dashboard controller with configuration and runtime data sources.
+     *
+     * @param configurationService service used to load persisted configuration
+     * @param serviceMonitor service used to read current runtime snapshots
+     * @param apiMapper mapper that converts entities into response DTOs
+     */
     public DashboardController(ConfigurationService configurationService,
                                ServiceMonitor serviceMonitor,
                                ApiMapper apiMapper) {
@@ -33,6 +43,12 @@ public class DashboardController {
         this.apiMapper = apiMapper;
     }
 
+    /**
+     * Returns dashboard summary, filters, and service rows.
+     *
+     * @param groupId optional group identifiers used to filter monitored services
+     * @return aggregated dashboard response for the selected services
+     */
     @GetMapping
     public DashboardResponse getDashboard(@RequestParam(required = false) List<Long> groupId) {
         Map<Long, ServiceRuntimeSnapshot> runtimeSnapshots = serviceMonitor.getRuntimeSnapshots();
@@ -47,6 +63,12 @@ public class DashboardController {
         return new DashboardResponse(buildSummary(services), groups, services);
     }
 
+    /**
+     * Builds status counters for the provided dashboard rows.
+     *
+     * @param services dashboard rows included in the current response
+     * @return summary counters grouped by health status
+     */
     private DashboardSummaryResponse buildSummary(List<DashboardServiceResponse> services) {
         long up = countByStatus(services, ServiceHealthStatus.UP);
         long down = countByStatus(services, ServiceHealthStatus.DOWN);
@@ -66,6 +88,13 @@ public class DashboardController {
         );
     }
 
+    /**
+     * Counts dashboard rows matching a specific health status.
+     *
+     * @param services dashboard rows to inspect
+     * @param status health status to count
+     * @return number of rows with the requested status
+     */
     private long countByStatus(List<DashboardServiceResponse> services, ServiceHealthStatus status) {
         return services.stream()
                 .filter(service -> service.status() == status)

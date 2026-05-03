@@ -214,6 +214,14 @@ public class ServiceMonitor {
         }
     }
 
+    /**
+     * Immediately executes the configured restart command for a service.
+     *
+     * <p>This method is used by the REST API for manual operator actions and bypasses
+     * cooldown/window checks because the request is explicit.
+     *
+     * @param serviceId identifier of the service to restart
+     */
     public void restartNow(Long serviceId) {
         MonitoredService service = monitoredServiceRepository.findById(serviceId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
@@ -221,6 +229,12 @@ public class ServiceMonitor {
         restart(service);
     }
 
+    /**
+     * Returns the latest runtime snapshot for one service if it has been checked.
+     *
+     * @param serviceId service identifier
+     * @return optional immutable snapshot of the in-memory state
+     */
     public Optional<ServiceRuntimeSnapshot> getRuntimeSnapshot(Long serviceId) {
         ServiceState state = states.get(serviceId);
         if (state == null) {
@@ -229,6 +243,11 @@ public class ServiceMonitor {
         return Optional.of(toSnapshot(state));
     }
 
+    /**
+     * Returns runtime snapshots for all services known to the monitor.
+     *
+     * @return map keyed by monitored service identifier
+     */
     public Map<Long, ServiceRuntimeSnapshot> getRuntimeSnapshots() {
         Map<Long, ServiceRuntimeSnapshot> snapshot = new LinkedHashMap<>();
         for (Map.Entry<Long, ServiceState> entry : states.entrySet()) {
@@ -237,6 +256,11 @@ public class ServiceMonitor {
         return snapshot;
     }
 
+    /**
+     * Runs an immediate monitoring check for one service.
+     *
+     * @param serviceId identifier of the service to check
+     */
     public void refreshSingle(Long serviceId) {
         MonitoredService service = monitoredServiceRepository.findById(serviceId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
@@ -248,6 +272,11 @@ public class ServiceMonitor {
         checkOne(service, true);
     }
 
+    /**
+     * Marks a service as paused in the runtime state map.
+     *
+     * @param service service whose monitoring is disabled
+     */
     private void markPaused(MonitoredService service) {
         ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
         state.setLastCheckAt(Instant.now());
@@ -257,6 +286,12 @@ public class ServiceMonitor {
         state.setLastMessage("Monitoring is paused");
     }
 
+    /**
+     * Marks a service as failed because the monitor itself hit an error.
+     *
+     * @param service service whose check failed
+     * @param message human-readable failure message
+     */
     private void markError(MonitoredService service, String message) {
         ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
         state.setLastCheckAt(Instant.now());
@@ -266,6 +301,12 @@ public class ServiceMonitor {
         state.setLastMessage(message);
     }
 
+    /**
+     * Converts mutable runtime state into an immutable API snapshot.
+     *
+     * @param state mutable in-memory service state
+     * @return immutable snapshot for API consumers
+     */
     private ServiceRuntimeSnapshot toSnapshot(ServiceState state) {
         return new ServiceRuntimeSnapshot(
                 state.getStatus(),
@@ -277,6 +318,13 @@ public class ServiceMonitor {
         );
     }
 
+    /**
+     * Builds a concise status message for an unhealthy service.
+     *
+     * @param processRunning whether the process lookup succeeded
+     * @param healthy whether the optional HTTP health-check succeeded
+     * @return operator-facing explanation of the failed checks
+     */
     private String buildUnhealthyMessage(boolean processRunning, boolean healthy) {
         if (!processRunning && !healthy) {
             return "Process is missing and health-check failed";
@@ -287,6 +335,12 @@ public class ServiceMonitor {
         return "Health-check failed";
     }
 
+    /**
+     * Returns the first non-blank value from a candidate list.
+     *
+     * @param values candidate values in priority order
+     * @return first non-blank value, or {@code null} when all values are blank
+     */
     private String firstNonBlank(String... values) {
         for (String value : values) {
             if (value != null && !value.isBlank()) {

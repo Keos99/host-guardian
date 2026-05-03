@@ -7,9 +7,21 @@ import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
 import org.springframework.stereotype.Component;
 
+/**
+ * Converts domain entities and runtime snapshots into REST DTOs.
+ *
+ * <p>The mapper keeps controllers focused on transport concerns and centralizes
+ * response-shaping rules used by both CRUD endpoints and the dashboard.
+ */
 @Component
 public class ApiMapper {
 
+    /**
+     * Maps a host entity to its REST representation.
+     *
+     * @param host persisted host configuration
+     * @return serialized host payload for API responses
+     */
     public HostResponse toHostResponse(HostConfig host) {
         return new HostResponse(
                 host.getId(),
@@ -23,6 +35,12 @@ public class ApiMapper {
         );
     }
 
+    /**
+     * Maps a logical service group to its REST representation.
+     *
+     * @param group persisted service group
+     * @return serialized group payload for API responses
+     */
     public GroupResponse toGroupResponse(ServiceGroup group) {
         return new GroupResponse(
                 group.getId(),
@@ -31,6 +49,12 @@ public class ApiMapper {
         );
     }
 
+    /**
+     * Maps a monitored service configuration to the DTO used by CRUD endpoints.
+     *
+     * @param service persisted monitored service entity
+     * @return serialized service configuration payload
+     */
     public MonitoredServiceResponse toServiceResponse(MonitoredService service) {
         return new MonitoredServiceResponse(
                 service.getId(),
@@ -53,6 +77,16 @@ public class ApiMapper {
         );
     }
 
+    /**
+     * Builds a dashboard row by combining static configuration with runtime state.
+     *
+     * <p>If no runtime snapshot exists yet, the mapper derives a neutral status from
+     * the monitoring flag so the UI can distinguish paused services from unchecked ones.
+     *
+     * @param service monitored service configuration
+     * @param snapshot latest in-memory runtime state, or {@code null} when absent
+     * @return dashboard view model for the service
+     */
     public DashboardServiceResponse toDashboardServiceResponse(MonitoredService service,
                                                                ServiceRuntimeSnapshot snapshot) {
         ServiceHealthStatus status = snapshot != null

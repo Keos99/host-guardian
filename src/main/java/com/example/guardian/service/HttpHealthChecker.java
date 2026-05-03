@@ -70,6 +70,12 @@ public class HttpHealthChecker {
         }
     }
 
+    /**
+     * Quotes a value so it can be passed as a single shell argument to {@code curl}.
+     *
+     * @param value raw shell argument value
+     * @return safely single-quoted shell argument
+     */
     private String shellQuote(String value) {
         return "'" + value.replace("'", "'\"'\"'") + "'";
     }

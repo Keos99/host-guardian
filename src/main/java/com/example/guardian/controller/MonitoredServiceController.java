@@ -21,6 +21,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * REST controller for managing monitored service definitions and manual actions.
+ */
 @RestController
 @RequestMapping("/api/services")
 public class MonitoredServiceController {
@@ -29,6 +32,13 @@ public class MonitoredServiceController {
     private final ServiceMonitor serviceMonitor;
     private final ApiMapper apiMapper;
 
+    /**
+     * Creates a monitored service controller.
+     *
+     * @param configurationService service that owns configuration persistence rules
+     * @param serviceMonitor service used for immediate restart and check actions
+     * @param apiMapper mapper used to serialize service entities
+     */
     public MonitoredServiceController(ConfigurationService configurationService,
                                       ServiceMonitor serviceMonitor,
                                       ApiMapper apiMapper) {
@@ -37,6 +47,12 @@ public class MonitoredServiceController {
         this.apiMapper = apiMapper;
     }
 
+    /**
+     * Lists monitored services, optionally filtered by group identifiers.
+     *
+     * @param groupId optional group identifiers used as a filter
+     * @return configured services as REST DTOs
+     */
     @GetMapping
     public List<MonitoredServiceResponse> listServices(@RequestParam(required = false) List<Long> groupId) {
         return configurationService.getServices(groupId).stream()
@@ -44,41 +60,82 @@ public class MonitoredServiceController {
                 .toList();
     }
 
+    /**
+     * Returns one monitored service by identifier.
+     *
+     * @param id service identifier
+     * @return service configuration as a REST DTO
+     */
     @GetMapping("/{id}")
     public MonitoredServiceResponse getService(@PathVariable Long id) {
         return apiMapper.toServiceResponse(configurationService.getService(id));
     }
 
+    /**
+     * Creates a new monitored service definition.
+     *
+     * @param request validated service payload
+     * @return created service as a REST DTO
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public MonitoredServiceResponse createService(@Valid @RequestBody MonitoredServiceRequest request) {
         return apiMapper.toServiceResponse(configurationService.createService(request));
     }
 
+    /**
+     * Updates an existing monitored service definition.
+     *
+     * @param id service identifier
+     * @param request validated replacement payload
+     * @return updated service as a REST DTO
+     */
     @PutMapping("/{id}")
     public MonitoredServiceResponse updateService(@PathVariable Long id,
                                                   @Valid @RequestBody MonitoredServiceRequest request) {
         return apiMapper.toServiceResponse(configurationService.updateService(id, request));
     }
 
+    /**
+     * Enables or disables automatic monitoring for a service.
+     *
+     * @param id service identifier
+     * @param enabled requested monitoring flag
+     * @return updated service as a REST DTO
+     */
     @PatchMapping("/{id}/monitoring")
     public MonitoredServiceResponse setMonitoringEnabled(@PathVariable Long id,
                                                          @RequestParam boolean enabled) {
         return apiMapper.toServiceResponse(configurationService.setMonitoringEnabled(id, enabled));
     }
 
+    /**
+     * Triggers the configured restart command immediately.
+     *
+     * @param id service identifier
+     */
     @PostMapping("/{id}/restart")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void restartService(@PathVariable Long id) {
         serviceMonitor.restartNow(id);
     }
 
+    /**
+     * Runs an immediate monitoring check for a single service.
+     *
+     * @param id service identifier
+     */
     @PostMapping("/{id}/check")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void checkServiceNow(@PathVariable Long id) {
         serviceMonitor.refreshSingle(id);
     }
 
+    /**
+     * Deletes a monitored service definition.
+     *
+     * @param id service identifier
+     */
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteService(@PathVariable Long id) {

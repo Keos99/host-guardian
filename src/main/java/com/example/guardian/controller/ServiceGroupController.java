@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * REST controller for managing logical service groups.
+ */
 @RestController
 @RequestMapping("/api/groups")
 public class ServiceGroupController {
@@ -25,11 +28,22 @@ public class ServiceGroupController {
     private final ConfigurationService configurationService;
     private final ApiMapper apiMapper;
 
+    /**
+     * Creates a service group controller.
+     *
+     * @param configurationService service that owns group persistence rules
+     * @param apiMapper mapper used to serialize group entities
+     */
     public ServiceGroupController(ConfigurationService configurationService, ApiMapper apiMapper) {
         this.configurationService = configurationService;
         this.apiMapper = apiMapper;
     }
 
+    /**
+     * Lists all logical service groups ordered by name.
+     *
+     * @return configured groups as REST DTOs
+     */
     @GetMapping
     public List<GroupResponse> listGroups() {
         return configurationService.getGroups().stream()
@@ -37,18 +51,36 @@ public class ServiceGroupController {
                 .toList();
     }
 
+    /**
+     * Creates a new service group.
+     *
+     * @param request validated group payload
+     * @return created group as a REST DTO
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public GroupResponse createGroup(@Valid @RequestBody GroupRequest request) {
         return apiMapper.toGroupResponse(configurationService.createGroup(request));
     }
 
+    /**
+     * Updates an existing service group.
+     *
+     * @param id group identifier
+     * @param request validated replacement payload
+     * @return updated group as a REST DTO
+     */
     @PutMapping("/{id}")
     public GroupResponse updateGroup(@PathVariable Long id,
                                      @Valid @RequestBody GroupRequest request) {
         return apiMapper.toGroupResponse(configurationService.updateGroup(id, request));
     }
 
+    /**
+     * Deletes a service group when no services reference it.
+     *
+     * @param id group identifier
+     */
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteGroup(@PathVariable Long id) {

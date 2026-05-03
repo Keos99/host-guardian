@@ -24,26 +24,56 @@ public class ServiceGroup {
     @Column(length = 2000)
     private String description;
 
+    /**
+     * Returns the persistent group identifier.
+     *
+     * @return database identifier of the group
+     */
     public Long getId() {
         return id;
     }
 
+    /**
+     * Sets the persistent group identifier.
+     *
+     * @param id database identifier of the group
+     */
     public void setId(Long id) {
         this.id = id;
     }
 
+    /**
+     * Returns the unique group display name.
+     *
+     * @return group name
+     */
     public String getName() {
         return name;
     }
 
+    /**
+     * Sets the unique group display name.
+     *
+     * @param name group name
+     */
     public void setName(String name) {
         this.name = name;
     }
 
+    /**
+     * Returns the optional group description.
+     *
+     * @return group description, or {@code null} when absent
+     */
     public String getDescription() {
         return description;
     }
 
+    /**
+     * Sets the optional group description.
+     *
+     * @param description group description
+     */
     public void setDescription(String description) {
         this.description = description;
     }

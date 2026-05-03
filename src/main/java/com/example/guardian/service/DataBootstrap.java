@@ -15,10 +15,20 @@ public class DataBootstrap implements ApplicationRunner {
 
     private final HostConfigRepository hostConfigRepository;
 
+    /**
+     * Creates a bootstrap component for initial host data.
+     *
+     * @param hostConfigRepository repository used to inspect and seed host records
+     */
     public DataBootstrap(HostConfigRepository hostConfigRepository) {
         this.hostConfigRepository = hostConfigRepository;
     }
 
+    /**
+     * Seeds the default local host when the database has no host configuration.
+     *
+     * @param args Spring Boot application arguments
+     */
     @Override
     public void run(ApplicationArguments args) {
         if (hostConfigRepository.count() > 0) {
