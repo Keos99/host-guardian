@@ -1,0 +1,531 @@
+const state = {
+    hosts: [],
+    groups: [],
+    dashboard: null
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    bindEvents();
+    refreshAll().catch(handleError);
+});
+
+function bindEvents() {
+    document.getElementById("refreshDashboardButton").addEventListener("click", () => refreshAll().catch(handleError));
+    document.getElementById("clearGroupFilterButton").addEventListener("click", () => {
+        clearMultiSelect(document.getElementById("groupFilter"));
+        loadDashboard().catch(handleError);
+    });
+    document.getElementById("groupFilter").addEventListener("change", () => loadDashboard().catch(handleError));
+
+    document.getElementById("serviceForm").addEventListener("submit", submitServiceForm);
+    document.getElementById("hostForm").addEventListener("submit", submitHostForm);
+    document.getElementById("groupForm").addEventListener("submit", submitGroupForm);
+
+    document.getElementById("resetServiceFormButton").addEventListener("click", resetServiceForm);
+    document.getElementById("resetHostFormButton").addEventListener("click", resetHostForm);
+    document.getElementById("resetGroupFormButton").addEventListener("click", resetGroupForm);
+
+    document.getElementById("hostConnectionMode").addEventListener("change", updateHostConnectionModeFields);
+
+    document.getElementById("servicesTableBody").addEventListener("click", onServicesTableClick);
+    document.getElementById("hostsTableBody").addEventListener("click", onHostsTableClick);
+    document.getElementById("groupsTableBody").addEventListener("click", onGroupsTableClick);
+}
+
+async function refreshAll() {
+    await Promise.all([loadHosts(), loadGroups()]);
+    await loadDashboard();
+    updateHostConnectionModeFields();
+}
+
+async function loadHosts() {
+    state.hosts = await requestJson("/api/hosts");
+    renderHostsTable();
+    populateHostSelect();
+}
+
+async function loadGroups() {
+    state.groups = await requestJson("/api/groups");
+    renderGroupsTable();
+    populateGroupFilter();
+    populateServiceGroupSelect();
+}
+
+async function loadDashboard() {
+    const params = new URLSearchParams();
+    getSelectedValues(document.getElementById("groupFilter")).forEach((value) => params.append("groupId", value));
+    const url = params.toString() ? `/api/dashboard?${params}` : "/api/dashboard";
+    state.dashboard = await requestJson(url);
+    renderSummary(state.dashboard.summary);
+    renderServicesTable(state.dashboard.services);
+}
+
+function populateHostSelect() {
+    const select = document.getElementById("serviceHostId");
+    const currentValue = select.value;
+    select.innerHTML = state.hosts
+        .map((host) => `<option value="${host.id}">${escapeHtml(host.name)} (${escapeHtml(host.connectionMode)})</option>`)
+        .join("");
+
+    if (currentValue) {
+        select.value = currentValue;
+    }
+}
+
+function populateGroupFilter() {
+    const select = document.getElementById("groupFilter");
+    const selected = new Set(getSelectedValues(select));
+
+    select.innerHTML = state.groups
+        .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
+        .join("");
+
+    Array.from(select.options).forEach((option) => {
+        option.selected = selected.has(option.value);
+    });
+}
+
+function populateServiceGroupSelect() {
+    const select = document.getElementById("serviceGroupId");
+    const currentValue = select.value;
+    select.innerHTML = [
+        `<option value="">Без группы</option>`,
+        ...state.groups.map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
+    ].join("");
+
+    if (currentValue) {
+        select.value = currentValue;
+    }
+}
+
+function renderSummary(summary) {
+    const items = [
+        ["Всего", summary.total],
+        ["UP", summary.up],
+        ["DOWN", summary.down],
+        ["PAUSED", summary.paused],
+        ["RESTARTING", summary.restarting],
+        ["ERROR", summary.error],
+        ["UNKNOWN", summary.unknown]
+    ];
+
+    document.getElementById("summaryGrid").innerHTML = items
+        .map(([label, value]) => `
+            <article class="summary-card">
+                <span>${escapeHtml(String(label))}</span>
+                <strong>${escapeHtml(String(value))}</strong>
+            </article>
+        `)
+        .join("");
+}
+
+function renderServicesTable(services) {
+    const tbody = document.getElementById("servicesTableBody");
+    if (!services.length) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">Сервисы пока не добавлены.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = services.map((service) => `
+        <tr>
+            <td>
+                <div class="service-cell">
+                    <strong>${escapeHtml(service.name)}</strong>
+                    <small>${escapeHtml(service.monitoringEnabled ? "monitoring enabled" : "monitoring paused")}</small>
+                </div>
+            </td>
+            <td>${escapeHtml(service.hostName)}<br><small>${escapeHtml(service.hostAddress)}</small></td>
+            <td>${escapeHtml(service.groupName ?? "—")}</td>
+            <td><span class="status-badge status-${service.status.toLowerCase()}">${escapeHtml(service.status)}</span></td>
+            <td>${renderBooleanPill(service.processRunning)}</td>
+            <td>${renderBooleanPill(service.healthCheckPassed)}</td>
+            <td>${escapeHtml(formatDateTime(service.lastCheckAt))}</td>
+            <td class="message-cell">${escapeHtml(service.lastMessage ?? "—")}</td>
+            <td>
+                <div class="actions">
+                    <button class="mini-button" data-action="toggle-monitoring" data-id="${service.id}" data-enabled="${service.monitoringEnabled}">
+                        ${service.monitoringEnabled ? "Пауза" : "Включить"}
+                    </button>
+                    <button class="mini-button" data-action="restart" data-id="${service.id}">Restart</button>
+                    <button class="mini-button" data-action="check" data-id="${service.id}">Check</button>
+                    <button class="mini-button" data-action="edit-service" data-id="${service.id}">Edit</button>
+                    <button class="mini-button danger" data-action="delete-service" data-id="${service.id}">Delete</button>
+                </div>
+            </td>
+        </tr>
+    `).join("");
+}
+
+function renderHostsTable() {
+    const tbody = document.getElementById("hostsTableBody");
+    tbody.innerHTML = state.hosts.map((host) => `
+        <tr>
+            <td>${escapeHtml(host.name)}</td>
+            <td>${escapeHtml(host.connectionMode)}</td>
+            <td>${escapeHtml(host.address)}</td>
+            <td>
+                <div class="actions">
+                    <button class="mini-button" data-action="edit-host" data-id="${host.id}">Edit</button>
+                    <button class="mini-button danger" data-action="delete-host" data-id="${host.id}">Delete</button>
+                </div>
+            </td>
+        </tr>
+    `).join("");
+}
+
+function renderGroupsTable() {
+    const tbody = document.getElementById("groupsTableBody");
+    tbody.innerHTML = state.groups.map((group) => `
+        <tr>
+            <td>${escapeHtml(group.name)}</td>
+            <td>${escapeHtml(group.description ?? "—")}</td>
+            <td>
+                <div class="actions">
+                    <button class="mini-button" data-action="edit-group" data-id="${group.id}">Edit</button>
+                    <button class="mini-button danger" data-action="delete-group" data-id="${group.id}">Delete</button>
+                </div>
+            </td>
+        </tr>
+    `).join("");
+}
+
+async function submitServiceForm(event) {
+    event.preventDefault();
+
+    const id = document.getElementById("serviceId").value;
+    const payload = {
+        name: document.getElementById("serviceName").value,
+        hostId: Number(document.getElementById("serviceHostId").value),
+        groupId: document.getElementById("serviceGroupId").value ? Number(document.getElementById("serviceGroupId").value) : null,
+        processMatch: document.getElementById("serviceProcessMatch").value,
+        restartCommand: document.getElementById("serviceRestartCommand").value,
+        healthUrl: document.getElementById("serviceHealthUrl").value || null,
+        healthTimeoutSeconds: Number(document.getElementById("serviceHealthTimeoutSeconds").value),
+        restartCooldownSeconds: Number(document.getElementById("serviceRestartCooldownSeconds").value),
+        restartWindowSeconds: Number(document.getElementById("serviceRestartWindowSeconds").value),
+        maxRestartsInWindow: Number(document.getElementById("serviceMaxRestartsInWindow").value),
+        monitoringEnabled: document.getElementById("serviceMonitoringEnabled").checked,
+        description: document.getElementById("serviceDescription").value || null
+    };
+
+    const method = id ? "PUT" : "POST";
+    const url = id ? `/api/services/${id}` : "/api/services";
+
+    await requestJson(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    showToast("Конфигурация сервиса сохранена.");
+    resetServiceForm();
+    await refreshAll();
+}
+
+async function submitHostForm(event) {
+    event.preventDefault();
+
+    const id = document.getElementById("hostId").value;
+    const payload = {
+        name: document.getElementById("hostName").value,
+        connectionMode: document.getElementById("hostConnectionMode").value,
+        address: document.getElementById("hostAddress").value,
+        sshPort: Number(document.getElementById("hostSshPort").value),
+        sshUser: document.getElementById("hostSshUser").value || null,
+        privateKeyPath: document.getElementById("hostPrivateKeyPath").value || null,
+        description: document.getElementById("hostDescription").value || null
+    };
+
+    const method = id ? "PUT" : "POST";
+    const url = id ? `/api/hosts/${id}` : "/api/hosts";
+
+    await requestJson(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    showToast("Хост сохранен.");
+    resetHostForm();
+    await refreshAll();
+}
+
+async function submitGroupForm(event) {
+    event.preventDefault();
+
+    const id = document.getElementById("groupId").value;
+    const payload = {
+        name: document.getElementById("groupName").value,
+        description: document.getElementById("groupDescription").value || null
+    };
+
+    const method = id ? "PUT" : "POST";
+    const url = id ? `/api/groups/${id}` : "/api/groups";
+
+    await requestJson(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    showToast("Группа сохранена.");
+    resetGroupForm();
+    await refreshAll();
+}
+
+async function onServicesTableClick(event) {
+    const button = event.target.closest("button[data-action]");
+    if (!button) {
+        return;
+    }
+
+    const id = Number(button.dataset.id);
+    const action = button.dataset.action;
+
+    if (action === "edit-service") {
+        editService(id);
+        return;
+    }
+
+    if (action === "toggle-monitoring") {
+        const enabled = button.dataset.enabled === "true";
+        await requestJson(`/api/services/${id}/monitoring?enabled=${String(!enabled)}`, {method: "PATCH"});
+        showToast(enabled ? "Мониторинг приостановлен." : "Мониторинг включен.");
+        await refreshAll();
+        return;
+    }
+
+    if (action === "restart") {
+        await requestVoid(`/api/services/${id}/restart`, {method: "POST"});
+        showToast("Команда рестарта отправлена.");
+        await refreshAll();
+        return;
+    }
+
+    if (action === "check") {
+        await requestVoid(`/api/services/${id}/check`, {method: "POST"});
+        showToast("Проверка сервиса выполнена.");
+        await refreshAll();
+        return;
+    }
+
+    if (action === "delete-service") {
+        if (!window.confirm("Удалить сервис?")) {
+            return;
+        }
+        await requestVoid(`/api/services/${id}`, {method: "DELETE"});
+        showToast("Сервис удален.");
+        await refreshAll();
+    }
+}
+
+async function onHostsTableClick(event) {
+    const button = event.target.closest("button[data-action]");
+    if (!button) {
+        return;
+    }
+
+    const id = Number(button.dataset.id);
+    const action = button.dataset.action;
+
+    if (action === "edit-host") {
+        editHost(id);
+        return;
+    }
+
+    if (action === "delete-host") {
+        if (!window.confirm("Удалить хост?")) {
+            return;
+        }
+        await requestVoid(`/api/hosts/${id}`, {method: "DELETE"});
+        showToast("Хост удален.");
+        await refreshAll();
+    }
+}
+
+async function onGroupsTableClick(event) {
+    const button = event.target.closest("button[data-action]");
+    if (!button) {
+        return;
+    }
+
+    const id = Number(button.dataset.id);
+    const action = button.dataset.action;
+
+    if (action === "edit-group") {
+        editGroup(id);
+        return;
+    }
+
+    if (action === "delete-group") {
+        if (!window.confirm("Удалить группу?")) {
+            return;
+        }
+        await requestVoid(`/api/groups/${id}`, {method: "DELETE"});
+        showToast("Группа удалена.");
+        await refreshAll();
+    }
+}
+
+function editService(id) {
+    const service = state.dashboard.services.find((item) => item.id === id);
+    if (!service) {
+        return;
+    }
+
+    requestJson(`/api/services/${id}`)
+        .then((fullService) => {
+            document.getElementById("serviceId").value = fullService.id;
+            document.getElementById("serviceName").value = fullService.name;
+            document.getElementById("serviceHostId").value = fullService.hostId;
+            document.getElementById("serviceGroupId").value = fullService.groupId ?? "";
+            document.getElementById("serviceProcessMatch").value = fullService.processMatch;
+            document.getElementById("serviceRestartCommand").value = fullService.restartCommand;
+            document.getElementById("serviceHealthUrl").value = fullService.healthUrl ?? "";
+            document.getElementById("serviceHealthTimeoutSeconds").value = fullService.healthTimeoutSeconds;
+            document.getElementById("serviceRestartCooldownSeconds").value = fullService.restartCooldownSeconds;
+            document.getElementById("serviceRestartWindowSeconds").value = fullService.restartWindowSeconds;
+            document.getElementById("serviceMaxRestartsInWindow").value = fullService.maxRestartsInWindow;
+            document.getElementById("serviceMonitoringEnabled").checked = fullService.monitoringEnabled;
+            document.getElementById("serviceDescription").value = fullService.description ?? "";
+            window.scrollTo({top: document.getElementById("serviceForm").offsetTop - 40, behavior: "smooth"});
+        })
+        .catch(handleError);
+}
+
+function editHost(id) {
+    const host = state.hosts.find((item) => item.id === id);
+    if (!host) {
+        return;
+    }
+
+    document.getElementById("hostId").value = host.id;
+    document.getElementById("hostName").value = host.name;
+    document.getElementById("hostConnectionMode").value = host.connectionMode;
+    document.getElementById("hostAddress").value = host.address;
+    document.getElementById("hostSshPort").value = host.sshPort;
+    document.getElementById("hostSshUser").value = host.sshUser ?? "";
+    document.getElementById("hostPrivateKeyPath").value = host.privateKeyPath ?? "";
+    document.getElementById("hostDescription").value = host.description ?? "";
+    updateHostConnectionModeFields();
+    window.scrollTo({top: document.getElementById("hostForm").offsetTop - 40, behavior: "smooth"});
+}
+
+function editGroup(id) {
+    const group = state.groups.find((item) => item.id === id);
+    if (!group) {
+        return;
+    }
+
+    document.getElementById("groupId").value = group.id;
+    document.getElementById("groupName").value = group.name;
+    document.getElementById("groupDescription").value = group.description ?? "";
+    window.scrollTo({top: document.getElementById("groupForm").offsetTop - 40, behavior: "smooth"});
+}
+
+function resetServiceForm() {
+    document.getElementById("serviceForm").reset();
+    document.getElementById("serviceId").value = "";
+    document.getElementById("serviceMonitoringEnabled").checked = true;
+    document.getElementById("serviceHealthTimeoutSeconds").value = 3;
+    document.getElementById("serviceRestartCooldownSeconds").value = 60;
+    document.getElementById("serviceRestartWindowSeconds").value = 600;
+    document.getElementById("serviceMaxRestartsInWindow").value = 3;
+}
+
+function resetHostForm() {
+    document.getElementById("hostForm").reset();
+    document.getElementById("hostId").value = "";
+    document.getElementById("hostAddress").value = "127.0.0.1";
+    document.getElementById("hostSshPort").value = 22;
+    document.getElementById("hostConnectionMode").value = "LOCAL";
+    updateHostConnectionModeFields();
+}
+
+function resetGroupForm() {
+    document.getElementById("groupForm").reset();
+    document.getElementById("groupId").value = "";
+}
+
+function updateHostConnectionModeFields() {
+    const mode = document.getElementById("hostConnectionMode").value;
+    document.querySelectorAll(".ssh-only-field").forEach((field) => {
+        field.classList.toggle("hidden", mode !== "SSH");
+    });
+}
+
+async function requestJson(url, options = {}) {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+        throw await createHttpError(response);
+    }
+    if (response.status === 204) {
+        return null;
+    }
+    return response.json();
+}
+
+async function requestVoid(url, options = {}) {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+        throw await createHttpError(response);
+    }
+}
+
+async function createHttpError(response) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+        const payload = await response.json();
+        return new Error(payload.message || payload.error || `HTTP ${response.status}`);
+    }
+    return new Error(await response.text() || `HTTP ${response.status}`);
+}
+
+function handleError(error) {
+    console.error(error);
+    showToast(error.message || "Произошла ошибка.", true);
+}
+
+function showToast(message, isError = false) {
+    const toast = document.getElementById("toast");
+    toast.textContent = message;
+    toast.classList.remove("hidden", "error");
+    if (isError) {
+        toast.classList.add("error");
+    }
+
+    clearTimeout(showToast.timeoutId);
+    showToast.timeoutId = window.setTimeout(() => {
+        toast.classList.add("hidden");
+    }, 3200);
+}
+
+function getSelectedValues(select) {
+    return Array.from(select.selectedOptions).map((option) => option.value);
+}
+
+function clearMultiSelect(select) {
+    Array.from(select.options).forEach((option) => {
+        option.selected = false;
+    });
+}
+
+function renderBooleanPill(value) {
+    return `<span class="boolean-pill ${value ? "is-true" : "is-false"}">${value ? "yes" : "no"}</span>`;
+}
+
+function formatDateTime(value) {
+    if (!value) {
+        return "—";
+    }
+    return new Date(value).toLocaleString("ru-RU");
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
