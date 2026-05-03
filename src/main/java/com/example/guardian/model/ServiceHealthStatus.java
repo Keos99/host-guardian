@@ -1,8 +1,11 @@
 package com.example.guardian.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * Represents the latest known health state of a monitored service.
  */
+@Schema(description = "Latest known health state of a monitored service.")
 public enum ServiceHealthStatus {
     /**
      * No runtime information is available yet.
