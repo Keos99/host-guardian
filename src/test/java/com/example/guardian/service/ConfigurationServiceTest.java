@@ -218,6 +218,9 @@ class ConfigurationServiceTest {
                 1L,
                 2L,
                 " java -jar api.jar ",
+                " /opt/api ",
+                " ./start.sh ",
+                true,
                 " systemctl restart api ",
                 " ",
                 5L,
@@ -238,6 +241,9 @@ class ConfigurationServiceTest {
         assertThat(created.getHost()).isSameAs(host);
         assertThat(created.getGroup()).isSameAs(group);
         assertThat(created.getProcessMatch()).isEqualTo("java -jar api.jar");
+        assertThat(created.getExecutionPath()).isEqualTo("/opt/api");
+        assertThat(created.getStartCommand()).isEqualTo("./start.sh");
+        assertThat(created.isManualRestartEnabled()).isTrue();
         assertThat(created.getRestartCommand()).isEqualTo("systemctl restart api");
         assertThat(created.getHealthUrl()).isNull();
         assertThat(created.getHealthTimeoutSeconds()).isEqualTo(5);
@@ -254,7 +260,8 @@ class ConfigurationServiceTest {
         MonitoredService existing = TestFixtures.service(10, host, null);
         existing.setName("api");
         MonitoredServiceRequest request = new MonitoredServiceRequest(
-                "api", 1L, null, "api.jar", "restart api", null,
+                "api", 1L, null, "api.jar", null, "start api", false, " ",
+                null,
                 5L, 60L, 600L, 3, false, "updated"
         );
 
@@ -285,13 +292,39 @@ class ConfigurationServiceTest {
     }
 
     @Test
+    void createServiceRequiresRestartCommandOnlyForManualRestartMode() {
+        HostConfig host = TestFixtures.localHost(1);
+        when(hostConfigRepository.findById(1L)).thenReturn(Optional.of(host));
+
+        MonitoredServiceRequest manualMissingCommand = new MonitoredServiceRequest(
+                "api", 1L, null, "api.jar", null, "start api", true, " ",
+                null, 5L, 60L, 600L, 3, true, null
+        );
+        assertThatThrownBy(() -> service.createService(manualMissingCommand))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+
+        MonitoredServiceRequest automaticRestart = new MonitoredServiceRequest(
+                "api", 1L, null, "api.jar", null, "start api", false, " ",
+                null, 5L, 60L, 600L, 3, true, null
+        );
+        when(monitoredServiceRepository.save(any(MonitoredService.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MonitoredService created = service.createService(automaticRestart);
+
+        assertThat(created.isManualRestartEnabled()).isFalse();
+        assertThat(created.getRestartCommand()).isEmpty();
+    }
+
+    @Test
     void updateServiceRejectsConflictingNewName() {
         MonitoredService existing = TestFixtures.service(10, TestFixtures.localHost(1), null);
         when(monitoredServiceRepository.findById(10L)).thenReturn(Optional.of(existing));
         when(monitoredServiceRepository.existsByNameIgnoreCase("other")).thenReturn(true);
 
         MonitoredServiceRequest request = new MonitoredServiceRequest(
-                "other", 1L, null, "api.jar", "restart api", null,
+                "other", 1L, null, "api.jar", null, "start api", false, null,
+                null,
                 5L, 60L, 600L, 3, true, null
         );
 

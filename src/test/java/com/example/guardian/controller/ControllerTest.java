@@ -123,6 +123,9 @@ class ControllerTest {
                 1L,
                 2L,
                 "billing-api.jar",
+                "/opt/billing-api",
+                "start",
+                true,
                 "restart",
                 "http://localhost/health",
                 3L,
@@ -162,6 +165,6 @@ class ControllerTest {
     }
 
     private ServiceRuntimeSnapshot snapshot(ServiceHealthStatus status) {
-        return new ServiceRuntimeSnapshot(status, true, true, status.name(), Instant.now(), null);
+        return new ServiceRuntimeSnapshot(status, true, 1234L, true, true, status.name(), Instant.now(), null);
     }
 }

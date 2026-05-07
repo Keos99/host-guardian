@@ -199,6 +199,11 @@ textarea {
     min-height: 140px;
 }
 
+textarea:disabled {
+    opacity: 0.62;
+    cursor: not-allowed;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -369,6 +374,11 @@ textarea {
 .status-paused {
     background: rgba(105, 102, 97, 0.12);
     color: #5d5750;
+}
+
+.health-off {
+    background: rgba(65, 76, 82, 0.1);
+    color: #5f7077;
 }
 
 .status-restarting {

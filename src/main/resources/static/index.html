@@ -54,7 +54,8 @@
                     <th>Группа</th>
                     <th>Статус</th>
                     <th>Процесс</th>
-                    <th>Health</th>
+                    <th>PID</th>
+                    <th>Health check</th>
                     <th>Последняя проверка</th>
                     <th>Сообщение</th>
                     <th>Действия</th>
@@ -99,6 +100,22 @@
                     </label>
 
                     <label class="field field-wide">
+                        <span>Путь к исполняемому файлу</span>
+                        <input id="serviceExecutionPath" type="text" placeholder="/opt/apps/app-one">
+                    </label>
+
+                    <label class="field field-wide">
+                        <span>Команда старта</span>
+                        <textarea id="serviceStartCommand" rows="4" required
+                                  placeholder="nohup java -jar app-one.jar >> /var/log/app-one.log 2>&1 &"></textarea>
+                    </label>
+
+                    <label class="field field-checkbox">
+                        <span>Команду рестарта ввести вручную</span>
+                        <input id="serviceManualRestartEnabled" type="checkbox">
+                    </label>
+
+                    <label class="field field-wide">
                         <span>URL health-check</span>
                         <input id="serviceHealthUrl" type="text" placeholder="http://127.0.0.1:8081/actuator/health">
                     </label>
@@ -135,8 +152,8 @@
 
                     <label class="field field-wide">
                         <span>Команда рестарта</span>
-                        <textarea id="serviceRestartCommand" rows="6" required
-                                  placeholder="nohup java -jar /opt/apps/app-one.jar >> /var/log/app-one.log 2>&1 &"></textarea>
+                        <textarea id="serviceRestartCommand" rows="6"
+                                  placeholder="systemctl stop app-one"></textarea>
                     </label>
                 </div>
 

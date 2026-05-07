@@ -21,6 +21,8 @@ public class ServiceState {
     private Instant lastCheckAt;
     private ServiceHealthStatus status = ServiceHealthStatus.UNKNOWN;
     private boolean processRunning;
+    private Long lastKnownPid;
+    private boolean healthCheckEnabled;
     private boolean healthCheckPassed;
     private String lastMessage = "Service has not been checked yet";
     private final Deque<Instant> restartHistory = new ArrayDeque<>();
@@ -95,6 +97,22 @@ public class ServiceState {
      */
     public void setProcessRunning(boolean processRunning) {
         this.processRunning = processRunning;
+    }
+
+    public Long getLastKnownPid() {
+        return lastKnownPid;
+    }
+
+    public void setLastKnownPid(Long lastKnownPid) {
+        this.lastKnownPid = lastKnownPid;
+    }
+
+    public boolean isHealthCheckEnabled() {
+        return healthCheckEnabled;
+    }
+
+    public void setHealthCheckEnabled(boolean healthCheckEnabled) {
+        this.healthCheckEnabled = healthCheckEnabled;
     }
 
     /**

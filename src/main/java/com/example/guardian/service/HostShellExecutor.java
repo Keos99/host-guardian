@@ -1,6 +1,7 @@
 package com.example.guardian.service;
 
 import com.example.guardian.model.HostConfig;
+import com.example.guardian.config.MonitorProperties;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -19,14 +20,16 @@ import java.util.List;
 public class HostShellExecutor {
 
     private final CommandExecutor commandExecutor;
+    private final MonitorProperties monitorProperties;
 
     /**
      * Creates a host-aware shell command executor.
      *
      * @param commandExecutor low-level command execution component
      */
-    public HostShellExecutor(CommandExecutor commandExecutor) {
+    public HostShellExecutor(CommandExecutor commandExecutor, MonitorProperties monitorProperties) {
         this.commandExecutor = commandExecutor;
+        this.monitorProperties = monitorProperties;
     }
 
     /**
@@ -50,7 +53,7 @@ public class HostShellExecutor {
         command.add("-o");
         command.add("BatchMode=yes");
         command.add("-o");
-        command.add("ConnectTimeout=5");
+        command.add("ConnectTimeout=" + Math.max(1, monitorProperties.getCommand().getSshConnectTimeout().toSeconds()));
         command.add("-p");
         command.add(String.valueOf(host.getSshPort()));
 

@@ -1,6 +1,7 @@
 package com.example.guardian.service;
 
 import com.example.guardian.TestFixtures;
+import com.example.guardian.config.MonitorProperties;
 import com.example.guardian.model.HostConfig;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -11,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,7 +61,7 @@ class CommandAndShellServicesTest {
     @Test
     void hostShellExecutorBuildsLocalCommand() {
         CommandExecutor commandExecutor = mock(CommandExecutor.class);
-        HostShellExecutor shellExecutor = new HostShellExecutor(commandExecutor);
+        HostShellExecutor shellExecutor = new HostShellExecutor(commandExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
         Duration timeout = Duration.ofSeconds(5);
         CommandExecutor.CommandResult result = new CommandExecutor.CommandResult(0, "ok", null);
@@ -74,7 +76,9 @@ class CommandAndShellServicesTest {
     @Test
     void hostShellExecutorBuildsSshCommandWithKeyAndQuoting() {
         CommandExecutor commandExecutor = mock(CommandExecutor.class);
-        HostShellExecutor shellExecutor = new HostShellExecutor(commandExecutor);
+        MonitorProperties properties = monitorProperties();
+        properties.getCommand().setSshConnectTimeout(Duration.ofSeconds(9));
+        HostShellExecutor shellExecutor = new HostShellExecutor(commandExecutor, properties);
         HostConfig host = TestFixtures.sshHost(1);
         Duration timeout = Duration.ofSeconds(5);
         when(commandExecutor.execute(any(), eq(timeout))).thenReturn(new CommandExecutor.CommandResult(0, "ok", null));
@@ -88,7 +92,7 @@ class CommandAndShellServicesTest {
                 "-o",
                 "BatchMode=yes",
                 "-o",
-                "ConnectTimeout=5",
+                "ConnectTimeout=9",
                 "-p",
                 "2222",
                 "-i",
@@ -101,7 +105,7 @@ class CommandAndShellServicesTest {
     @Test
     void hostShellExecutorOmitsPrivateKeyWhenBlank() {
         CommandExecutor commandExecutor = mock(CommandExecutor.class);
-        HostShellExecutor shellExecutor = new HostShellExecutor(commandExecutor);
+        HostShellExecutor shellExecutor = new HostShellExecutor(commandExecutor, monitorProperties());
         HostConfig host = TestFixtures.sshHost(1);
         host.setPrivateKeyPath(" ");
         when(commandExecutor.execute(any(), any())).thenReturn(new CommandExecutor.CommandResult(0, "ok", null));
@@ -117,7 +121,7 @@ class CommandAndShellServicesTest {
     @Test
     void linuxProcessInspectorReturnsTrueOnlyForSuccessfulNonBlankOutput() {
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
-        LinuxProcessInspector inspector = new LinuxProcessInspector(hostShellExecutor);
+        LinuxProcessInspector inspector = new LinuxProcessInspector(hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
 
         when(hostShellExecutor.execute(host, "pgrep -af \"api\\\"service\"", Duration.ofSeconds(5)))
@@ -131,10 +135,57 @@ class CommandAndShellServicesTest {
     }
 
     @Test
+    void linuxProcessInspectorFindsFirstProcessAndChecksPidWithConfiguredTimeouts() {
+        HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
+        MonitorProperties properties = monitorProperties();
+        properties.getCommand().setProcessLookupTimeout(Duration.ofSeconds(7));
+        properties.getCommand().setPidCheckTimeout(Duration.ofSeconds(2));
+        LinuxProcessInspector inspector = new LinuxProcessInspector(hostShellExecutor, properties);
+        HostConfig host = TestFixtures.localHost(1);
+
+        when(hostShellExecutor.execute(host, "pgrep -af \"api.jar\"", Duration.ofSeconds(7)))
+                .thenReturn(new CommandExecutor.CommandResult(0, "1234 java -jar api.jar\n5678 grep api.jar", null));
+        when(hostShellExecutor.execute(host, "kill -0 1234", Duration.ofSeconds(2)))
+                .thenReturn(new CommandExecutor.CommandResult(0, "", null));
+
+        Optional<LinuxProcessInspector.ProcessInfo> process = inspector.findFirst(host, "api.jar");
+
+        assertThat(process).isPresent();
+        assertThat(process.orElseThrow().pid()).isEqualTo(1234L);
+        assertThat(process.orElseThrow().commandLine()).isEqualTo("java -jar api.jar");
+        assertThat(inspector.isPidRunning(host, 1234L)).isTrue();
+    }
+
+    @Test
+    void linuxProcessInspectorStopsKnownPidThenFallsBackToKillNineAfterTimeout() {
+        HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
+        MonitorProperties properties = monitorProperties();
+        properties.getCommand().setStopCommandExtraTimeout(Duration.ofSeconds(3));
+        LinuxProcessInspector inspector = new LinuxProcessInspector(hostShellExecutor, properties);
+        HostConfig host = TestFixtures.localHost(1);
+        Duration timeout = Duration.ofSeconds(4);
+        Duration commandTimeout = Duration.ofSeconds(7);
+
+        when(hostShellExecutor.execute(eq(host), any(), eq(commandTimeout)))
+                .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
+
+        CommandExecutor.CommandResult result = inspector.stop(host, "api.jar", 1234L, timeout);
+
+        assertThat(result.success()).isTrue();
+        ArgumentCaptor<String> commandCaptor = ArgumentCaptor.forClass(String.class);
+        verify(hostShellExecutor).execute(eq(host), commandCaptor.capture(), eq(commandTimeout));
+        assertThat(commandCaptor.getValue()).contains("pids=$(pgrep -f 'api.jar' || true)");
+        assertThat(commandCaptor.getValue()).contains("known_pid='1234'");
+        assertThat(commandCaptor.getValue()).contains("ps -p \"$known_pid\" -o args=");
+        assertThat(commandCaptor.getValue()).contains("kill $pids");
+        assertThat(commandCaptor.getValue()).contains("kill -9 $alive");
+    }
+
+    @Test
     void httpHealthCheckerUsesRemoteCurlOnSshHost() {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
-        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor);
+        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.sshHost(1);
         Duration timeout = Duration.ofSeconds(3);
         when(hostShellExecutor.execute(host,
@@ -149,12 +200,14 @@ class CommandAndShellServicesTest {
     void httpHealthCheckerUsesAtLeastOneSecondForRemoteCurl() {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
-        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor);
+        MonitorProperties properties = monitorProperties();
+        properties.getCommand().setHealthCommandExtraTimeout(Duration.ofSeconds(3));
+        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, properties);
         HostConfig host = TestFixtures.sshHost(1);
         Duration timeout = Duration.ZERO;
         when(hostShellExecutor.execute(host,
                 "curl -fsS --max-time 1 'http://service/health' > /dev/null",
-                timeout.plusSeconds(1)))
+                timeout.plusSeconds(3)))
                 .thenReturn(new CommandExecutor.CommandResult(1, "", "failed"));
 
         assertThat(checker.isHealthy(host, "http://service/health", timeout)).isFalse();
@@ -165,7 +218,7 @@ class CommandAndShellServicesTest {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         RestTemplate restTemplate = mock(RestTemplate.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
-        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor);
+        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
         Duration timeout = Duration.ofSeconds(2);
 
@@ -182,7 +235,7 @@ class CommandAndShellServicesTest {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         RestTemplate restTemplate = mock(RestTemplate.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
-        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor);
+        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
         Duration timeout = Duration.ofSeconds(2);
 
@@ -196,5 +249,9 @@ class CommandAndShellServicesTest {
 
     private boolean isWindows() {
         return System.getProperty("os.name").toLowerCase().contains("win");
+    }
+
+    private MonitorProperties monitorProperties() {
+        return new MonitorProperties();
     }
 }

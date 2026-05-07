@@ -52,6 +52,8 @@ public final class TestFixtures {
         service.setGroup(group);
         service.setProcessMatch("billing-api.jar");
         service.setRestartCommand("systemctl restart billing-api");
+        service.setStartCommand("systemctl start billing-api");
+        service.setManualRestartEnabled(true);
         service.setHealthUrl("http://127.0.0.1:8080/actuator/health");
         service.setHealthTimeoutSeconds(3);
         service.setRestartCooldownSeconds(60);

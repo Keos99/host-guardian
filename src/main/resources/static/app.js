@@ -34,6 +34,7 @@ function bindEvents() {
     document.getElementById("resetGroupFormButton").addEventListener("click", resetGroupForm);
 
     document.getElementById("hostConnectionMode").addEventListener("change", updateHostConnectionModeFields);
+    document.getElementById("serviceManualRestartEnabled").addEventListener("change", updateRestartCommandMode);
 
     document.getElementById("servicesTableBody").addEventListener("click", (event) => onServicesTableClick(event).catch(handleError));
     document.getElementById("hostsTableBody").addEventListener("click", (event) => onHostsTableClick(event).catch(handleError));
@@ -44,6 +45,7 @@ async function refreshAll() {
     await Promise.all([loadHosts(), loadGroups()]);
     await refreshDashboard();
     updateHostConnectionModeFields();
+    updateRestartCommandMode();
 }
 
 function startDashboardPolling() {
@@ -170,7 +172,7 @@ function renderSummary(summary) {
 function renderServicesTable(services) {
     const tbody = document.getElementById("servicesTableBody");
     if (!services.length) {
-        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">Сервисы пока не добавлены.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="empty-state">Сервисы пока не добавлены.</td></tr>`;
         return;
     }
 
@@ -186,7 +188,8 @@ function renderServicesTable(services) {
             <td>${escapeHtml(service.groupName ?? "—")}</td>
             <td><span class="status-badge status-${service.status.toLowerCase()}">${escapeHtml(service.status)}</span></td>
             <td>${renderBooleanPill(service.processRunning)}</td>
-            <td>${renderBooleanPill(service.healthCheckPassed)}</td>
+            <td>${escapeHtml(service.lastKnownPid ?? "—")}</td>
+            <td>${renderHealthCheckPill(service)}</td>
             <td>${escapeHtml(formatDateTime(service.lastCheckAt))}</td>
             <td class="message-cell">${escapeHtml(service.lastMessage ?? "—")}</td>
             <td>
@@ -247,6 +250,9 @@ async function submitServiceForm(event) {
             hostId: Number(document.getElementById("serviceHostId").value),
             groupId: document.getElementById("serviceGroupId").value ? Number(document.getElementById("serviceGroupId").value) : null,
             processMatch: document.getElementById("serviceProcessMatch").value,
+            executionPath: document.getElementById("serviceExecutionPath").value || null,
+            startCommand: document.getElementById("serviceStartCommand").value,
+            manualRestartEnabled: document.getElementById("serviceManualRestartEnabled").checked,
             restartCommand: document.getElementById("serviceRestartCommand").value,
             healthUrl: document.getElementById("serviceHealthUrl").value || null,
             healthTimeoutSeconds: Number(document.getElementById("serviceHealthTimeoutSeconds").value),
@@ -478,7 +484,10 @@ function editService(id) {
             document.getElementById("serviceHostId").value = fullService.hostId;
             document.getElementById("serviceGroupId").value = fullService.groupId ?? "";
             document.getElementById("serviceProcessMatch").value = fullService.processMatch;
-            document.getElementById("serviceRestartCommand").value = fullService.restartCommand;
+            document.getElementById("serviceExecutionPath").value = fullService.executionPath ?? "";
+            document.getElementById("serviceStartCommand").value = fullService.startCommand;
+            document.getElementById("serviceManualRestartEnabled").checked = fullService.manualRestartEnabled;
+            document.getElementById("serviceRestartCommand").value = fullService.restartCommand ?? "";
             document.getElementById("serviceHealthUrl").value = fullService.healthUrl ?? "";
             document.getElementById("serviceHealthTimeoutSeconds").value = fullService.healthTimeoutSeconds;
             document.getElementById("serviceRestartCooldownSeconds").value = fullService.restartCooldownSeconds;
@@ -486,6 +495,7 @@ function editService(id) {
             document.getElementById("serviceMaxRestartsInWindow").value = fullService.maxRestartsInWindow;
             document.getElementById("serviceMonitoringEnabled").checked = fullService.monitoringEnabled;
             document.getElementById("serviceDescription").value = fullService.description ?? "";
+            updateRestartCommandMode();
             window.scrollTo({top: document.getElementById("serviceForm").offsetTop - 40, behavior: "smooth"});
         })
         .catch(handleError);
@@ -525,10 +535,12 @@ function resetServiceForm() {
     document.getElementById("serviceForm").reset();
     document.getElementById("serviceId").value = "";
     document.getElementById("serviceMonitoringEnabled").checked = true;
+    document.getElementById("serviceManualRestartEnabled").checked = false;
     document.getElementById("serviceHealthTimeoutSeconds").value = 3;
     document.getElementById("serviceRestartCooldownSeconds").value = 60;
     document.getElementById("serviceRestartWindowSeconds").value = 600;
     document.getElementById("serviceMaxRestartsInWindow").value = 3;
+    updateRestartCommandMode();
 }
 
 function resetHostForm() {
@@ -550,6 +562,13 @@ function updateHostConnectionModeFields() {
     document.querySelectorAll(".ssh-only-field").forEach((field) => {
         field.classList.toggle("hidden", mode !== "SSH");
     });
+}
+
+function updateRestartCommandMode() {
+    const manual = document.getElementById("serviceManualRestartEnabled").checked;
+    const restartCommand = document.getElementById("serviceRestartCommand");
+    restartCommand.disabled = !manual;
+    restartCommand.required = manual;
 }
 
 async function requestJson(url, options = {}) {
@@ -610,6 +629,13 @@ function clearMultiSelect(select) {
 
 function renderBooleanPill(value) {
     return `<span class="boolean-pill ${value ? "is-true" : "is-false"}">${value ? "yes" : "no"}</span>`;
+}
+
+function renderHealthCheckPill(service) {
+    if (!service.healthCheckEnabled) {
+        return `<span class="boolean-pill health-off">off</span>`;
+    }
+    return renderBooleanPill(service.healthCheckPassed);
 }
 
 function formatDateTime(value) {

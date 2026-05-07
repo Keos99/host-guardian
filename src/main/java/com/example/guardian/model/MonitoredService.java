@@ -38,9 +38,21 @@ public class MonitoredService {
     @Column(nullable = false)
     private String processMatch;
 
+    @Column(length = 1024)
+    private String executionPath;
+
     @Lob
     @Column(nullable = false)
-    private String restartCommand;
+    private String restartCommand = "";
+
+    @Lob
+    @Column(nullable = false)
+    private String startCommand;
+
+    @Column(nullable = false)
+    private boolean manualRestartEnabled;
+
+    private Long lastKnownPid;
 
     private String healthUrl;
 
@@ -152,6 +164,14 @@ public class MonitoredService {
         this.processMatch = processMatch;
     }
 
+    public String getExecutionPath() {
+        return executionPath;
+    }
+
+    public void setExecutionPath(String executionPath) {
+        this.executionPath = executionPath;
+    }
+
     /**
      * Returns the shell command used to restart the service.
      *
@@ -168,6 +188,30 @@ public class MonitoredService {
      */
     public void setRestartCommand(String restartCommand) {
         this.restartCommand = restartCommand;
+    }
+
+    public String getStartCommand() {
+        return startCommand;
+    }
+
+    public void setStartCommand(String startCommand) {
+        this.startCommand = startCommand;
+    }
+
+    public boolean isManualRestartEnabled() {
+        return manualRestartEnabled;
+    }
+
+    public void setManualRestartEnabled(boolean manualRestartEnabled) {
+        this.manualRestartEnabled = manualRestartEnabled;
+    }
+
+    public Long getLastKnownPid() {
+        return lastKnownPid;
+    }
+
+    public void setLastKnownPid(Long lastKnownPid) {
+        this.lastKnownPid = lastKnownPid;
     }
 
     /**

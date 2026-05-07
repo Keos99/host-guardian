@@ -59,7 +59,11 @@ class ModelTest {
         service.setHost(host);
         service.setGroup(group);
         service.setProcessMatch("api.jar");
+        service.setExecutionPath("/opt/api");
         service.setRestartCommand("restart");
+        service.setStartCommand("start");
+        service.setManualRestartEnabled(true);
+        service.setLastKnownPid(1234L);
         service.setHealthUrl("http://localhost/health");
         service.setHealthTimeoutSeconds(4);
         service.setRestartCooldownSeconds(70);
@@ -73,7 +77,11 @@ class ModelTest {
         assertThat(service.getHost()).isSameAs(host);
         assertThat(service.getGroup()).isSameAs(group);
         assertThat(service.getProcessMatch()).isEqualTo("api.jar");
+        assertThat(service.getExecutionPath()).isEqualTo("/opt/api");
         assertThat(service.getRestartCommand()).isEqualTo("restart");
+        assertThat(service.getStartCommand()).isEqualTo("start");
+        assertThat(service.isManualRestartEnabled()).isTrue();
+        assertThat(service.getLastKnownPid()).isEqualTo(1234L);
         assertThat(service.getHealthUrl()).isEqualTo("http://localhost/health");
         assertThat(service.getHealthTimeoutSeconds()).isEqualTo(4);
         assertThat(service.getRestartCooldownSeconds()).isEqualTo(70);

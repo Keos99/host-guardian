@@ -15,6 +15,8 @@ import java.time.Instant;
 public record ServiceRuntimeSnapshot(
         ServiceHealthStatus status,
         boolean processRunning,
+        Long lastKnownPid,
+        boolean healthCheckEnabled,
         boolean healthCheckPassed,
         String lastMessage,
         Instant lastCheckAt,

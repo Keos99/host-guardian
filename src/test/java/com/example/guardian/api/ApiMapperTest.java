@@ -59,7 +59,11 @@ class ApiMapperTest {
         assertThat(response.groupId()).isEqualTo(2);
         assertThat(response.groupName()).isEqualTo("Payments");
         assertThat(response.processMatch()).isEqualTo("billing-api.jar");
+        assertThat(response.executionPath()).isNull();
         assertThat(response.restartCommand()).isEqualTo("systemctl restart billing-api");
+        assertThat(response.startCommand()).isEqualTo("systemctl start billing-api");
+        assertThat(response.manualRestartEnabled()).isTrue();
+        assertThat(response.lastKnownPid()).isNull();
         assertThat(response.healthUrl()).isEqualTo("http://127.0.0.1:8080/actuator/health");
         assertThat(response.healthTimeoutSeconds()).isEqualTo(3);
         assertThat(response.restartCooldownSeconds()).isEqualTo(60);
@@ -87,6 +91,8 @@ class ApiMapperTest {
         ServiceRuntimeSnapshot snapshot = new ServiceRuntimeSnapshot(
                 ServiceHealthStatus.UP,
                 true,
+                1234L,
+                true,
                 true,
                 "Service is healthy",
                 checkAt,
@@ -97,6 +103,8 @@ class ApiMapperTest {
 
         assertThat(response.status()).isEqualTo(ServiceHealthStatus.UP);
         assertThat(response.processRunning()).isTrue();
+        assertThat(response.lastKnownPid()).isEqualTo(1234L);
+        assertThat(response.healthCheckEnabled()).isTrue();
         assertThat(response.healthCheckPassed()).isTrue();
         assertThat(response.lastMessage()).isEqualTo("Service is healthy");
         assertThat(response.lastCheckAt()).isEqualTo(checkAt);
@@ -117,5 +125,26 @@ class ApiMapperTest {
         assertThat(enabledResponse.lastCheckAt()).isNull();
         assertThat(enabledResponse.lastRestartAt()).isNull();
         assertThat(pausedResponse.status()).isEqualTo(ServiceHealthStatus.PAUSED);
+    }
+
+    @Test
+    void mapsDashboardServiceWithBlankHealthUrlAsHealthCheckDisabled() {
+        MonitoredService service = TestFixtures.service(3, TestFixtures.localHost(1), null);
+        service.setHealthUrl(" ");
+        ServiceRuntimeSnapshot snapshot = new ServiceRuntimeSnapshot(
+                ServiceHealthStatus.UP,
+                true,
+                1234L,
+                false,
+                false,
+                "Service is healthy",
+                Instant.parse("2026-05-03T10:15:30Z"),
+                null
+        );
+
+        DashboardServiceResponse response = mapper.toDashboardServiceResponse(service, snapshot);
+
+        assertThat(response.healthCheckEnabled()).isFalse();
+        assertThat(response.healthCheckPassed()).isFalse();
     }
 }

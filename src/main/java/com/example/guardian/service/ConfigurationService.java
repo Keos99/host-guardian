@@ -316,7 +316,14 @@ public class ConfigurationService {
         service.setHost(host);
         service.setGroup(group);
         service.setProcessMatch(request.processMatch().trim());
-        service.setRestartCommand(request.restartCommand().trim());
+        service.setExecutionPath(trimToNull(request.executionPath()));
+        service.setStartCommand(request.startCommand().trim());
+        service.setManualRestartEnabled(request.manualRestartEnabled());
+        if (request.manualRestartEnabled()
+                && (request.restartCommand() == null || request.restartCommand().isBlank())) {
+            throw badRequest("restartCommand is required when manualRestartEnabled is true");
+        }
+        service.setRestartCommand(request.restartCommand() != null ? request.restartCommand().trim() : "");
         service.setHealthUrl(trimToNull(request.healthUrl()));
         service.setHealthTimeoutSeconds(request.healthTimeoutSeconds());
         service.setRestartCooldownSeconds(request.restartCooldownSeconds());

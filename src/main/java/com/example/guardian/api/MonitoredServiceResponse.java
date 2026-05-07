@@ -15,7 +15,11 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param groupId optional identifier of the logical service group
  * @param groupName optional name of the logical service group
  * @param processMatch process lookup pattern
+ * @param executionPath optional working path for service commands
  * @param restartCommand restart command stored for the service
+ * @param startCommand start command stored for the service
+ * @param manualRestartEnabled whether custom restart command mode is enabled
+ * @param lastKnownPid latest persisted PID found by the monitor
  * @param healthUrl optional health endpoint URL
  * @param healthTimeoutSeconds health-check timeout in seconds
  * @param restartCooldownSeconds cooldown between restart attempts in seconds
@@ -53,8 +57,20 @@ public record MonitoredServiceResponse(
         @Schema(description = "Pattern passed to pgrep -af to locate the service process.", example = "billing-api.jar")
         String processMatch,
 
+        @Schema(description = "Optional working path used before start or manual restart commands.", example = "/opt/billing-api", nullable = true)
+        String executionPath,
+
         @Schema(description = "Shell command executed to restart the service.", example = "systemctl restart billing-api")
         String restartCommand,
+
+        @Schema(description = "Shell command executed to start the service.", example = "systemctl start billing-api")
+        String startCommand,
+
+        @Schema(description = "Whether restartCommand is manually supplied instead of automatic kill-based restart.", example = "false")
+        boolean manualRestartEnabled,
+
+        @Schema(description = "Latest PID found and persisted by monitoring.", example = "1234", nullable = true)
+        Long lastKnownPid,
 
         @Schema(description = "Optional HTTP health endpoint.", example = "http://127.0.0.1:8080/actuator/health", nullable = true)
         String healthUrl,

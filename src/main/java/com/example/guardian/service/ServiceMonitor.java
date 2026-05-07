@@ -5,6 +5,7 @@ import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceState;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
 import com.example.guardian.repository.MonitoredServiceRepository;
+import com.example.guardian.config.MonitorProperties;
 import org.springframework.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,7 @@ public class ServiceMonitor {
     private final LinuxProcessInspector processInspector;
     private final HttpHealthChecker healthChecker;
     private final HostShellExecutor hostShellExecutor;
+    private final MonitorProperties monitorProperties;
 
     private final Map<Long, ServiceState> states = new ConcurrentHashMap<>();
 
@@ -58,11 +60,13 @@ public class ServiceMonitor {
     public ServiceMonitor(MonitoredServiceRepository monitoredServiceRepository,
                           LinuxProcessInspector processInspector,
                           HttpHealthChecker healthChecker,
-                          HostShellExecutor hostShellExecutor) {
+                          HostShellExecutor hostShellExecutor,
+                          MonitorProperties monitorProperties) {
         this.monitoredServiceRepository = monitoredServiceRepository;
         this.processInspector = processInspector;
         this.healthChecker = healthChecker;
         this.hostShellExecutor = hostShellExecutor;
+        this.monitorProperties = monitorProperties;
     }
 
     /**
@@ -106,16 +110,25 @@ public class ServiceMonitor {
         ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
         state.setLastCheckAt(Instant.now());
 
-        boolean processRunning = processInspector.isRunning(service.getHost(), service.getProcessMatch());
-        boolean healthy = true;
-        if (service.getHealthUrl() != null && !service.getHealthUrl().isBlank()) {
+        Optional<LinuxProcessInspector.ProcessInfo> foundProcess = processInspector.findFirst(
+                service.getHost(),
+                service.getProcessMatch()
+        );
+        Long pid = resolveAndPersistPid(service, foundProcess);
+        boolean pidRunning = pid != null && processInspector.isPidRunning(service.getHost(), pid);
+        boolean processRunning = foundProcess.isPresent() && pidRunning;
+        boolean healthCheckEnabled = hasHealthCheck(service);
+        boolean healthy = false;
+        if (healthCheckEnabled) {
             healthy = healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout());
         }
 
         state.setProcessRunning(processRunning);
-        state.setHealthCheckPassed(healthy);
+        state.setLastKnownPid(pid);
+        state.setHealthCheckEnabled(healthCheckEnabled);
+        state.setHealthCheckPassed(healthCheckEnabled && healthy);
 
-        if (processRunning && healthy) {
+        if (processRunning && (!healthCheckEnabled || healthy)) {
             log.debug("Service {} is OK", service.getName());
             state.setStatus(ServiceHealthStatus.UP);
             state.setLastMessage("Service is healthy");
@@ -123,9 +136,9 @@ public class ServiceMonitor {
         }
 
         log.warn("Service {} is unhealthy. processRunning={}, healthy={}",
-                service.getName(), processRunning, healthy);
+                service.getName(), processRunning, healthCheckEnabled ? healthy : null);
         state.setStatus(ServiceHealthStatus.DOWN);
-        state.setLastMessage(buildUnhealthyMessage(processRunning, healthy));
+        state.setLastMessage(buildUnhealthyMessage(processRunning, healthCheckEnabled, healthy));
 
         if (!allowRestart) {
             return;
@@ -189,28 +202,46 @@ public class ServiceMonitor {
     private void restart(MonitoredService service) {
         log.warn("Restarting service {}", service.getName());
 
-        CommandExecutor.CommandResult result = hostShellExecutor.execute(
-                service.getHost(),
-                service.getRestartCommand(),
-                Duration.ofSeconds(20)
+        CommandExecutor.CommandResult restartResult = service.isManualRestartEnabled()
+                ? executeServiceCommand(service, service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout())
+                : processInspector.stop(
+                        service.getHost(),
+                        service.getProcessMatch(),
+                        service.getLastKnownPid(),
+                        monitorProperties.getCommand().getStopTimeout()
+                );
+
+        if (!restartResult.success()) {
+            ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
+            state.setStatus(ServiceHealthStatus.ERROR);
+            state.setLastMessage("Restart failed: " + firstNonBlank(restartResult.error(), restartResult.output(), "Unknown error"));
+            log.error("Restart failed for service {}. exitCode={}, error={}, output={}",
+                    service.getName(), restartResult.exitCode(), restartResult.error(), restartResult.output());
+            return;
+        }
+
+        CommandExecutor.CommandResult startResult = executeServiceCommand(
+                service,
+                service.getStartCommand(),
+                monitorProperties.getCommand().getStartTimeout()
         );
 
-        if (result.success()) {
+        if (startResult.success()) {
             ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
             Instant now = Instant.now();
             state.setLastRestartAt(now);
             state.getRestartHistory().addLast(now);
             state.setStatus(ServiceHealthStatus.RESTARTING);
-            state.setLastMessage("Restart command executed successfully");
+            state.setLastMessage("Restart and start commands executed successfully");
 
-            log.info("Restart command executed for service {}. Output: {}",
-                    service.getName(), result.output());
+            log.info("Restart and start commands executed for service {}. Restart output: {}. Start output: {}",
+                    service.getName(), restartResult.output(), startResult.output());
         } else {
             ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
             state.setStatus(ServiceHealthStatus.ERROR);
-            state.setLastMessage("Restart failed: " + firstNonBlank(result.error(), result.output(), "Unknown error"));
-            log.error("Restart failed for service {}. exitCode={}, error={}, output={}",
-                    service.getName(), result.exitCode(), result.error(), result.output());
+            state.setLastMessage("Start failed: " + firstNonBlank(startResult.error(), startResult.output(), "Unknown error"));
+            log.error("Start failed for service {}. exitCode={}, error={}, output={}",
+                    service.getName(), startResult.exitCode(), startResult.error(), startResult.output());
         }
     }
 
@@ -282,6 +313,8 @@ public class ServiceMonitor {
         state.setLastCheckAt(Instant.now());
         state.setStatus(ServiceHealthStatus.PAUSED);
         state.setProcessRunning(false);
+        state.setLastKnownPid(service.getLastKnownPid());
+        state.setHealthCheckEnabled(hasHealthCheck(service));
         state.setHealthCheckPassed(false);
         state.setLastMessage("Monitoring is paused");
     }
@@ -297,6 +330,8 @@ public class ServiceMonitor {
         state.setLastCheckAt(Instant.now());
         state.setStatus(ServiceHealthStatus.ERROR);
         state.setProcessRunning(false);
+        state.setLastKnownPid(service.getLastKnownPid());
+        state.setHealthCheckEnabled(hasHealthCheck(service));
         state.setHealthCheckPassed(false);
         state.setLastMessage(message);
     }
@@ -311,6 +346,8 @@ public class ServiceMonitor {
         return new ServiceRuntimeSnapshot(
                 state.getStatus(),
                 state.isProcessRunning(),
+                state.getLastKnownPid(),
+                state.isHealthCheckEnabled(),
                 state.isHealthCheckPassed(),
                 state.getLastMessage(),
                 state.getLastCheckAt(),
@@ -325,14 +362,50 @@ public class ServiceMonitor {
      * @param healthy whether the optional HTTP health-check succeeded
      * @return operator-facing explanation of the failed checks
      */
-    private String buildUnhealthyMessage(boolean processRunning, boolean healthy) {
-        if (!processRunning && !healthy) {
+    private String buildUnhealthyMessage(boolean processRunning, boolean healthCheckEnabled, boolean healthy) {
+        if (!processRunning && healthCheckEnabled && !healthy) {
             return "Process is missing and health-check failed";
         }
         if (!processRunning) {
             return "Process is missing";
         }
         return "Health-check failed";
+    }
+
+    private Long resolveAndPersistPid(MonitoredService service,
+                                      Optional<LinuxProcessInspector.ProcessInfo> foundProcess) {
+        Long currentPid = service.getLastKnownPid();
+        if (foundProcess.isEmpty()) {
+            return currentPid;
+        }
+
+        Long foundPid = foundProcess.orElseThrow().pid();
+        if (!foundPid.equals(currentPid)) {
+            service.setLastKnownPid(foundPid);
+            monitoredServiceRepository.save(service);
+        }
+        return foundPid;
+    }
+
+    private boolean hasHealthCheck(MonitoredService service) {
+        return service.getHealthUrl() != null && !service.getHealthUrl().isBlank();
+    }
+
+    private CommandExecutor.CommandResult executeServiceCommand(MonitoredService service,
+                                                                String command,
+                                                                Duration timeout) {
+        return hostShellExecutor.execute(service.getHost(), withExecutionPath(service, command), timeout);
+    }
+
+    private String withExecutionPath(MonitoredService service, String command) {
+        if (service.getExecutionPath() == null || service.getExecutionPath().isBlank()) {
+            return command;
+        }
+        return "cd " + shellQuote(service.getExecutionPath()) + " && " + command;
+    }
+
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     /**
