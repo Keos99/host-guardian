@@ -10,19 +10,43 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.function.Supplier;
 
+/**
+ * Small adapter around JSch session creation.
+ *
+ * <p>The facade keeps JSch construction and authentication setup isolated from
+ * the command provider. Tests can inject a custom factory without opening real
+ * network connections.
+ */
 @Component
 public class JschFacade {
 
     private final Supplier<JSch> jschFactory;
 
+    /**
+     * Creates a facade that constructs a fresh {@link JSch} instance per session.
+     */
     public JschFacade() {
         this(JSch::new);
     }
 
+    /**
+     * Creates a facade with an injectable JSch factory.
+     *
+     * @param jschFactory factory used to create JSch clients
+     */
     JschFacade(Supplier<JSch> jschFactory) {
         this.jschFactory = jschFactory;
     }
 
+    /**
+     * Opens and connects an SSH session for a configured host.
+     *
+     * @param host target SSH host
+     * @param sshProperties global SSH provider settings
+     * @param connectTimeout maximum time allowed for session connection
+     * @return connected JSch session
+     * @throws JSchException when identity loading or session connection fails
+     */
     public Session openSession(HostConfig host,
                                MonitorProperties.Ssh sshProperties,
                                Duration connectTimeout) throws JSchException {
@@ -37,6 +61,12 @@ public class JschFacade {
         return session;
     }
 
+    /**
+     * Converts a {@link Duration} to a positive JSch timeout in milliseconds.
+     *
+     * @param timeout timeout duration
+     * @return timeout in milliseconds, capped at {@link Integer#MAX_VALUE}
+     */
     static int toTimeoutMillis(Duration timeout) {
         long millis = Math.max(1, timeout.toMillis());
         return millis > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) millis;

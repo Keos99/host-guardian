@@ -14,7 +14,7 @@ The project combines:
 - background process monitoring;
 - optional HTTP health checks;
 - automatic and manual restarts;
-- host-aware execution through `LOCAL` or `SSH`;
+- host-aware execution through `LOCAL` or `SSH` with selectable SSH providers;
 - configuration stored in the database;
 - built-in web dashboard for operations.
 
@@ -44,11 +44,15 @@ Host Guardian addresses that by moving service definitions into the database, at
 - Optional service grouping for dashboard filtering.
 - Flag-based pause/resume of monitoring through `monitoringEnabled`.
 - Periodic monitoring via Spring scheduling.
-- Linux process lookup through `pgrep -af`.
+- Linux process lookup through `pgrep -af`, PID persistence, and PID liveness checks.
 - Optional HTTP health checks.
-- Automatic restart command execution with cooldown and restart-window protection.
+- Optional service execution path used before start and manual restart commands.
+- Required start command per service.
+- Automatic kill-based restart or manually entered restart command, followed by the start command.
+- Cooldown and restart-window protection for restart attempts.
 - Manual `restart` and manual `check` actions through REST API and dashboard.
 - Built-in dashboard for creating, editing, deleting, filtering, and operating monitored services.
+- SSH provider switch: system `ssh` client or JSch library.
 - Flyway-managed schema migrations.
 - H2 support for local start and PostgreSQL support through a dedicated profile.
 
@@ -64,7 +68,7 @@ Host Guardian addresses that by moving service definitions into the database, at
 | Persistence | Spring Data JPA, Hibernate |
 | Migrations | Flyway |
 | Databases | H2, PostgreSQL |
-| Monitoring execution | `bash`, `pgrep`, `curl`, `ssh` |
+| Monitoring execution | `bash`, `pgrep`, `curl`, system `ssh`, JSch |
 | UI | Built-in static dashboard (`HTML`, `CSS`, `JavaScript`) |
 
 ---
@@ -86,9 +90,10 @@ flowchart LR
     MON --> HTTP["HttpHealthChecker"]
     MON --> SHELL["HostShellExecutor"]
     SHELL --> CMD["CommandExecutor"]
+    SHELL --> SSH["SshCommandProvider"]
 
     SHELL --> HOST1["Local Host"]
-    SHELL --> HOST2["Remote Host via SSH"]
+    SSH --> HOST2["Remote Host via system ssh or JSch"]
 ```
 
 ### Core Flow
@@ -96,10 +101,12 @@ flowchart LR
 1. Scheduler starts a monitoring cycle.
 2. `ServiceMonitor` loads all services from the database.
 3. For each enabled service it:
-   checks process presence,
+   finds a matching process and persists the latest PID,
+   verifies process liveness with the PID,
    optionally runs HTTP health check,
    evaluates restart policy,
-   executes restart command locally or through SSH if needed.
+   performs a kill-based or manual restart action,
+   executes the configured start command locally or through SSH if needed.
 4. The latest runtime state is exposed through the dashboard API.
 
 ---
@@ -135,7 +142,11 @@ erDiagram
         bigint host_id
         bigint group_id
         string process_match
+        string execution_path
         string restart_command
+        string start_command
+        boolean manual_restart_enabled
+        bigint last_known_pid
         string health_url
         bigint health_timeout_seconds
         bigint restart_cooldown_seconds
@@ -149,7 +160,9 @@ erDiagram
 
 - `host_config` stores target hosts and how to connect to them.
 - `service_group` stores optional logical groups for filtering.
-- `monitored_service` stores restart logic and health-check settings for each service.
+- `monitored_service` stores process matching, command execution settings, restart logic, last known PID, and health-check settings for each service.
+
+Command columns use `varchar(4096)` for PostgreSQL compatibility.
 
 ### Runtime-only state
 
@@ -159,6 +172,7 @@ It keeps transient operational data such as:
 - last known status;
 - last check time;
 - last restart time;
+- last process and health-check result;
 - restart history used for cooldown and restart window enforcement;
 - last message shown in the dashboard.
 
@@ -256,7 +270,28 @@ Defined in [application.yml](D:\hi-lt-atm\hi-lt-watcher\src\main\resources\appli
 - H2 datasource;
 - Flyway validation path through standard startup;
 - H2 console enabled;
-- monitor interval configured through `monitor.interval`.
+- monitor interval configured through `monitor.interval`;
+- SSH provider configured through `monitor.ssh.provider`;
+- command timeouts configured through `monitor.command.*`.
+
+Relevant default settings:
+
+```yaml
+monitor:
+  interval: 30s
+  ssh:
+    provider: system # system | jsch
+    strict-host-key-checking: false
+  command:
+    process-lookup-timeout: 5s
+    pid-check-timeout: 3s
+    stop-timeout: 10s
+    stop-command-extra-timeout: 2s
+    restart-timeout: 20s
+    start-timeout: 20s
+    health-command-extra-timeout: 1s
+    ssh-connect-timeout: 5s
+```
 
 ### PostgreSQL profile
 
@@ -273,12 +308,26 @@ Defined in [application-postgres.yml](D:\hi-lt-atm\hi-lt-watcher\src\main\resour
 Host Guardian can execute checks and restart commands in two modes:
 
 - `LOCAL` — commands are executed directly on the machine where Host Guardian runs;
-- `SSH` — commands are executed on a remote Linux host using the system `ssh` client.
+- `SSH` — commands are executed on a remote Linux host using the configured SSH provider.
+
+### SSH providers
+
+- `system` uses the operating system `ssh` client and preserves the original behavior.
+- `jsch` uses the JSch Java library and does not require the `ssh` executable on the Host Guardian machine.
+
+Provider selection:
+
+```yaml
+monitor:
+  ssh:
+    provider: jsch
+```
 
 ### SSH assumptions in the current version
 
-- Host Guardian is expected to run on Linux for production usage.
-- `ssh`, `bash`, `pgrep`, and `curl` must be available in `PATH`.
+- Target hosts are expected to be Linux hosts.
+- `bash`, `pgrep`, and `curl` must be available on target hosts.
+- The `system` provider additionally requires `ssh` in `PATH` on the Host Guardian machine.
 - SSH uses key-based access.
 - The host entry stores:
   host address,
@@ -286,8 +335,9 @@ Host Guardian can execute checks and restart commands in two modes:
   SSH user,
   path to private key.
 - For remote hosts, health checks are executed on the target host itself through `curl`.
+- `strict-host-key-checking` is currently applied by the JSch provider. The system provider follows the host machine SSH client configuration.
 
-That last point matters because many internal health endpoints are only available as `127.0.0.1` on the remote machine.
+The remote health-check behavior matters because many internal health endpoints are only available as `127.0.0.1` on the remote machine.
 
 ---
 
@@ -304,7 +354,8 @@ The built-in dashboard lives at `/` and is backed entirely by the project itself
 - manually trigger service check;
 - manually trigger service restart;
 - pause or resume monitoring per service;
-- inspect latest status, process result, health result, and last message.
+- inspect latest status, process result, PID, Health check state, and last message;
+- show busy animation while saving or executing service operations.
 
 ### Dashboard data shown per service
 
@@ -314,7 +365,8 @@ The built-in dashboard lives at `/` and is backed entirely by the project itself
 - monitoring enabled or paused state;
 - calculated health status;
 - process lookup result;
-- health-check result;
+- last known PID;
+- separate Health check state: `yes`, `no`, or `off` when no URL is configured;
 - last check time;
 - last restart time;
 - latest operational message.
@@ -376,24 +428,36 @@ Group filtering is supported through repeated query params:
 
 - Host mode: `LOCAL`
 - Process match: `billing-service.jar`
-- Health URL: `http://127.0.0.1:8085/actuator/health`
-- Restart command:
+- Execution path: `/opt/apps/billing-service`
+- Start command:
 
 ```bash
-nohup java -jar /opt/apps/billing-service.jar >> /var/log/billing-service.log 2>&1 &
+nohup java -jar billing-service.jar >> /var/log/billing-service.log 2>&1 &
 ```
+
+- Manual restart command enabled: no. Host Guardian finds and stops the matched process, escalates to `kill -9` after timeout, then runs the start command.
+- Health URL: `http://127.0.0.1:8085/actuator/health`
 
 ### Example 2: Remote app on another server
 
 - Host mode: `SSH`
 - Host address: `10.10.20.15`
 - Process match: `order-worker.jar`
-- Health URL: `http://127.0.0.1:8092/actuator/health`
+- Execution path: `/opt/order-worker`
+- Start command:
+
+```bash
+nohup java -jar order-worker.jar >> /var/log/order-worker.log 2>&1 &
+```
+
+- Manual restart command enabled: yes
 - Restart command:
 
 ```bash
-cd /opt/order-worker && nohup java -jar order-worker.jar >> /var/log/order-worker.log 2>&1 &
+./stop.sh
 ```
+
+- Health URL: `http://127.0.0.1:8092/actuator/health`
 
 ---
 
@@ -415,9 +479,10 @@ This prevents simple restart storms when a service has a persistent startup fail
 
 Schema is managed through Flyway.
 
-Current migration:
+Current migrations:
 
 - [V1__init.sql](D:\hi-lt-atm\hi-lt-watcher\src\main\resources\db\migration\V1__init.sql)
+- [V2__service_start_and_pid.sql](D:\hi-lt-atm\hi-lt-watcher\src\main\resources\db\migration\V2__service_start_and_pid.sql)
 
 Flyway runs automatically on startup for both H2 and PostgreSQL.
 
@@ -427,7 +492,8 @@ Flyway runs automatically on startup for both H2 and PostgreSQL.
 
 - The service is designed for Linux-oriented operational environments.
 - Shell commands should be self-contained and safe to run non-interactively.
-- If a monitored app requires environment variables, working directory changes, or stdout redirection, include that in the restart command.
+- If a monitored app requires environment variables or stdout redirection, include that in the start or manual restart command.
+- If a service has an execution path, Host Guardian runs start and manual restart commands as `cd '<executionPath>' && <command>`.
 - For SSH hosts, filesystem paths and local loopback health URLs are interpreted on the remote machine, not on the Host Guardian host.
 
 ---
@@ -440,6 +506,7 @@ Flyway runs automatically on startup for both H2 and PostgreSQL.
 - There is no notification channel yet.
 - There is no role-based access control for the dashboard or API yet.
 - SSH auth currently assumes private key usage rather than password auth.
+- The JSch provider supports the configured private key path; passphrase management is not modeled separately yet.
 - The frontend is an embedded operational dashboard, not a separate SPA.
 
 ---

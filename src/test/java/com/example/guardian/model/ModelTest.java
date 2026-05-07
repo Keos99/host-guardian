@@ -1,7 +1,12 @@
 package com.example.guardian.model;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Lob;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -95,6 +100,37 @@ class ModelTest {
     }
 
     @Test
+    void monitoredServiceCommandColumnsUseVarcharMapping() throws Exception {
+        assertThat(commandColumn("restartCommand").length()).isEqualTo(4096);
+        assertThat(commandColumn("startCommand").length()).isEqualTo(4096);
+        assertThat(MonitoredService.class.getDeclaredField("restartCommand").isAnnotationPresent(Lob.class)).isFalse();
+        assertThat(MonitoredService.class.getDeclaredField("startCommand").isAnnotationPresent(Lob.class)).isFalse();
+    }
+
+    @Test
+    void flywayMigrationsDoNotUseClobForCommandColumns() throws Exception {
+        Path migrationDir = Path.of("src/main/resources/db/migration");
+
+        try (var migrations = Files.list(migrationDir)) {
+            String sql = migrations
+                    .filter(path -> path.getFileName().toString().endsWith(".sql"))
+                    .map(path -> {
+                        try {
+                            return Files.readString(path);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    })
+                    .reduce("", (left, right) -> left + "\n" + right)
+                    .toLowerCase();
+
+            assertThat(sql).doesNotContain("clob");
+            assertThat(sql).contains("restart_command varchar(4096) not null");
+            assertThat(sql).contains("start_command varchar(4096)");
+        }
+    }
+
+    @Test
     void serviceStateStartsUnknownAndStoresRuntimeState() {
         ServiceState state = new ServiceState();
         Instant check = Instant.parse("2026-05-03T10:15:30Z");
@@ -119,5 +155,10 @@ class ModelTest {
         assertThat(state.isHealthCheckPassed()).isTrue();
         assertThat(state.getLastMessage()).isEqualTo("ok");
         assertThat(state.getRestartHistory()).containsExactly(restart);
+    }
+
+    private Column commandColumn(String fieldName) throws NoSuchFieldException {
+        Field field = MonitoredService.class.getDeclaredField(fieldName);
+        return field.getAnnotation(Column.class);
     }
 }

@@ -53,10 +53,20 @@ public class MonitorProperties {
         this.command = command;
     }
 
+    /**
+     * Returns global SSH provider settings.
+     *
+     * @return SSH provider configuration
+     */
     public Ssh getSsh() {
         return ssh;
     }
 
+    /**
+     * Sets global SSH provider settings.
+     *
+     * @param ssh SSH provider configuration
+     */
     public void setSsh(Ssh ssh) {
         this.ssh = ssh;
     }
@@ -137,29 +147,62 @@ public class MonitorProperties {
         }
     }
 
+    /**
+     * SSH provider settings shared by all remote hosts.
+     */
     public static class Ssh {
 
         private Provider provider = Provider.SYSTEM;
         private boolean strictHostKeyChecking;
 
+        /**
+         * Returns the SSH implementation used for remote command execution.
+         *
+         * @return selected SSH provider
+         */
         public Provider getProvider() {
             return provider;
         }
 
+        /**
+         * Sets the SSH implementation used for remote command execution.
+         *
+         * @param provider selected SSH provider
+         */
         public void setProvider(Provider provider) {
             this.provider = provider;
         }
 
+        /**
+         * Checks whether SSH host key verification is strict.
+         *
+         * @return {@code true} to require known host keys in JSch sessions
+         */
         public boolean isStrictHostKeyChecking() {
             return strictHostKeyChecking;
         }
 
+        /**
+         * Sets whether SSH host key verification is strict.
+         *
+         * @param strictHostKeyChecking {@code true} to require known host keys in JSch sessions
+         */
         public void setStrictHostKeyChecking(boolean strictHostKeyChecking) {
             this.strictHostKeyChecking = strictHostKeyChecking;
         }
 
+        /**
+         * Supported SSH transport implementations.
+         */
         public enum Provider {
+            /**
+             * Execute remote commands through the operating system {@code ssh} client.
+             */
             SYSTEM,
+
+            /**
+             * Execute remote commands through the JSch Java library.
+             */
             JSCH
         }
     }

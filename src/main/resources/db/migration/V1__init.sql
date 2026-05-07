@@ -21,7 +21,7 @@ create table monitored_service (
     host_id bigint not null,
     group_id bigint,
     process_match varchar(255) not null,
-    restart_command clob not null,
+    restart_command varchar(4096) not null,
     health_url varchar(1024),
     health_timeout_seconds bigint not null,
     restart_cooldown_seconds bigint not null,

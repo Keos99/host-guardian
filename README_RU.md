@@ -14,7 +14,7 @@ Host Guardian - это Spring Boot приложение для монитори�
 - фоновый мониторинг процессов;
 - опциональные HTTP health-check проверки;
 - автоматические и ручные перезапуски;
-- выполнение команд с учетом хоста через режимы `LOCAL` или `SSH`;
+- выполнение команд с учетом хоста через режимы `LOCAL` или `SSH` с переключаемыми SSH-провайдерами;
 - хранение конфигурации в базе данных;
 - встроенную веб-панель для операционных задач.
 
@@ -44,11 +44,15 @@ Host Guardian решает это так: определения сервисо�
 - Опциональная группировка сервисов для фильтрации на dashboard.
 - Приостановка и возобновление мониторинга через флаг `monitoringEnabled`.
 - Периодический мониторинг через Spring scheduling.
-- Поиск Linux-процессов через `pgrep -af`.
+- Поиск Linux-процессов через `pgrep -af`, сохранение PID и дополнительная проверка по PID.
 - Опциональные HTTP health-check проверки.
-- Автоматическое выполнение restart-команд с защитой по cooldown и окну перезапусков.
+- Опциональный путь выполнения сервиса перед командами старта и ручного рестарта.
+- Обязательная команда старта для каждого сервиса.
+- Автоматический kill-based рестарт или ручная команда рестарта, после которой выполняется команда старта.
+- Защита по cooldown и окну перезапусков.
 - Ручные действия `restart` и `check` через REST API и dashboard.
 - Встроенный dashboard для создания, редактирования, удаления, фильтрации и управления сервисами.
+- Переключаемый SSH provider: системный `ssh` client или JSch.
 - Миграции схемы через Flyway.
 - Поддержка H2 для локального запуска и PostgreSQL через отдельный профиль.
 
@@ -64,7 +68,7 @@ Host Guardian решает это так: определения сервисо�
 | Persistence | Spring Data JPA, Hibernate |
 | Миграции | Flyway |
 | Базы данных | H2, PostgreSQL |
-| Выполнение мониторинга | `bash`, `pgrep`, `curl`, `ssh` |
+| Выполнение мониторинга | `bash`, `pgrep`, `curl`, системный `ssh`, JSch |
 | UI | Встроенный статический dashboard (`HTML`, `CSS`, `JavaScript`) |
 
 ---
@@ -86,16 +90,17 @@ flowchart LR
     MON --> HTTP["HttpHealthChecker"]
     MON --> SHELL["HostShellExecutor"]
     SHELL --> CMD["CommandExecutor"]
+    SHELL --> SSH["SshCommandProvider"]
 
     SHELL --> HOST1["Local Host"]
-    SHELL --> HOST2["Remote Host via SSH"]
+    SSH --> HOST2["Remote Host via system ssh или JSch"]
 ```
 
 ### Основной поток
 
 1. Scheduler запускает цикл мониторинга.
 2. `ServiceMonitor` загружает все сервисы из базы данных.
-3. Для каждого включенного сервиса выполняется проверка процесса, при необходимости HTTP health-check, оценка restart policy и запуск restart-команды локально или через SSH.
+3. Для каждого включенного сервиса выполняется поиск процесса, сохранение последнего PID, проверка живости PID, при необходимости HTTP health-check, оценка restart policy, kill-based или ручный restart action и запуск команды старта локально или через SSH.
 4. Последнее runtime-состояние отдается через dashboard API.
 
 ---
@@ -131,7 +136,11 @@ erDiagram
         bigint host_id
         bigint group_id
         string process_match
+        string execution_path
         string restart_command
+        string start_command
+        boolean manual_restart_enabled
+        bigint last_known_pid
         string health_url
         bigint health_timeout_seconds
         bigint restart_cooldown_seconds
@@ -145,7 +154,9 @@ erDiagram
 
 - `host_config` хранит целевые хосты и способ подключения к ним.
 - `service_group` хранит опциональные логические группы для фильтрации.
-- `monitored_service` хранит логику перезапуска и настройки health-check для каждого сервиса.
+- `monitored_service` хранит поиск процесса, настройки выполнения команд, логику перезапуска, последний известный PID и настройки health-check для каждого сервиса.
+
+Колонки команд используют `varchar(4096)` для совместимости с PostgreSQL.
 
 ### Runtime-состояние
 
@@ -155,6 +166,7 @@ erDiagram
 - последний известный статус;
 - время последней проверки;
 - время последнего перезапуска;
+- результат последней проверки процесса и health-check;
 - историю перезапусков для cooldown и restart window;
 - последнее сообщение, показываемое в dashboard.
 
@@ -252,7 +264,28 @@ SPRING_PROFILES_ACTIVE=postgres
 - H2 datasource;
 - стандартная startup-валидация Flyway;
 - включенная H2 console;
-- интервал мониторинга через `monitor.interval`.
+- интервал мониторинга через `monitor.interval`;
+- SSH provider через `monitor.ssh.provider`;
+- timeouts команд через `monitor.command.*`.
+
+Основные настройки по умолчанию:
+
+```yaml
+monitor:
+  interval: 30s
+  ssh:
+    provider: system # system | jsch
+    strict-host-key-checking: false
+  command:
+    process-lookup-timeout: 5s
+    pid-check-timeout: 3s
+    stop-timeout: 10s
+    stop-command-extra-timeout: 2s
+    restart-timeout: 20s
+    start-timeout: 20s
+    health-command-extra-timeout: 1s
+    ssh-connect-timeout: 5s
+```
 
 ### PostgreSQL profile
 
@@ -269,17 +302,32 @@ SPRING_PROFILES_ACTIVE=postgres
 Host Guardian может выполнять проверки и restart-команды в двух режимах:
 
 - `LOCAL` - команды выполняются прямо на машине, где запущен Host Guardian;
-- `SSH` - команды выполняются на удаленном Linux-хосте через системный `ssh` client.
+- `SSH` - команды выполняются на удаленном Linux-хосте через настроенный SSH provider.
+
+### SSH providers
+
+- `system` использует системный `ssh` client и сохраняет исходное поведение.
+- `jsch` использует Java-библиотеку JSch и не требует установленного `ssh` executable на машине Host Guardian.
+
+Выбор provider:
+
+```yaml
+monitor:
+  ssh:
+    provider: jsch
+```
 
 ### Текущие предположения для SSH
 
-- Для production-использования Host Guardian предполагает Linux-окружение.
-- `ssh`, `bash`, `pgrep` и `curl` должны быть доступны в `PATH`.
+- Целевые хосты ожидаются Linux-хостами.
+- `bash`, `pgrep` и `curl` должны быть доступны на целевых хостах.
+- Provider `system` дополнительно требует `ssh` в `PATH` на машине Host Guardian.
 - SSH использует key-based доступ.
 - Запись хоста хранит адрес, SSH port, SSH user и путь к private key.
 - Для удаленных хостов health-check выполняется на самом целевом хосте через `curl`.
+- `strict-host-key-checking` сейчас применяется provider-ом JSch. Provider `system` использует настройки SSH client на машине Host Guardian.
 
-Последний пункт важен: многие внутренние health endpoints доступны только как `127.0.0.1` на удаленной машине.
+Поведение remote health-check важно: многие внутренние health endpoints доступны только как `127.0.0.1` на удаленной машине.
 
 ---
 
@@ -296,7 +344,8 @@ Host Guardian может выполнять проверки и restart-кома
 - ручной запуск проверки сервиса;
 - ручной запуск перезапуска сервиса;
 - постановку мониторинга на паузу и возобновление мониторинга по каждому сервису;
-- просмотр последнего статуса, результата проверки процесса, результата health-check и последнего сообщения.
+- просмотр последнего статуса, результата проверки процесса, PID, состояния Health check и последнего сообщения;
+- busy-анимацию при сохранении и выполнении операций с сервисами.
 
 ### Данные, отображаемые по сервису
 
@@ -306,7 +355,8 @@ Host Guardian может выполнять проверки и restart-кома
 - включен мониторинг или стоит пауза;
 - вычисленный health status;
 - результат поиска процесса;
-- результат health-check;
+- последний известный PID;
+- отдельное состояние Health check: `yes`, `no` или `off`, если URL не задан;
 - время последней проверки;
 - время последнего перезапуска;
 - последнее операционное сообщение.
@@ -379,24 +429,36 @@ UI и API обслуживаются одним приложением.
 
 - Host mode: `LOCAL`
 - Process match: `billing-service.jar`
-- Health URL: `http://127.0.0.1:8085/actuator/health`
-- Restart command:
+- Execution path: `/opt/apps/billing-service`
+- Start command:
 
 ```bash
-nohup java -jar /opt/apps/billing-service.jar >> /var/log/billing-service.log 2>&1 &
+nohup java -jar billing-service.jar >> /var/log/billing-service.log 2>&1 &
 ```
+
+- Ручная команда рестарта: отключена. Host Guardian находит и останавливает процесс, после timeout выполняет `kill -9`, затем запускает start command.
+- Health URL: `http://127.0.0.1:8085/actuator/health`
 
 ### Пример 2: удаленное приложение на другом сервере
 
 - Host mode: `SSH`
 - Host address: `10.10.20.15`
 - Process match: `order-worker.jar`
-- Health URL: `http://127.0.0.1:8092/actuator/health`
+- Execution path: `/opt/order-worker`
+- Start command:
+
+```bash
+nohup java -jar order-worker.jar >> /var/log/order-worker.log 2>&1 &
+```
+
+- Ручная команда рестарта: включена
 - Restart command:
 
 ```bash
-cd /opt/order-worker && nohup java -jar order-worker.jar >> /var/log/order-worker.log 2>&1 &
+./stop.sh
 ```
+
+- Health URL: `http://127.0.0.1:8092/actuator/health`
 
 ---
 
@@ -418,9 +480,10 @@ Host Guardian защищается от этого с помощью:
 
 Схема управляется через Flyway.
 
-Текущая миграция:
+Текущие миграции:
 
 - [V1__init.sql](src/main/resources/db/migration/V1__init.sql)
+- [V2__service_start_and_pid.sql](src/main/resources/db/migration/V2__service_start_and_pid.sql)
 
 Flyway автоматически запускается при старте приложения для H2 и PostgreSQL.
 
@@ -444,7 +507,8 @@ mvn verify
 
 - Сервис ориентирован на Linux-операционные окружения.
 - Shell-команды должны быть самодостаточными и безопасными для non-interactive запуска.
-- Если мониторируемому приложению нужны environment variables, смена working directory или stdout redirection, включайте это прямо в restart-команду.
+- Если мониторируемому приложению нужны environment variables или stdout redirection, включайте это в start command или ручную restart command.
+- Если у сервиса задан execution path, Host Guardian выполняет start и ручную restart command как `cd '<executionPath>' && <command>`.
 - Для SSH-хостов filesystem paths и local loopback health URLs интерпретируются на удаленной машине, а не на хосте Host Guardian.
 
 ---
@@ -457,6 +521,7 @@ mvn verify
 - Пока нет notification channel.
 - Пока нет role-based access control для dashboard и API.
 - SSH auth сейчас предполагает private key, а не password auth.
+- Provider JSch использует настроенный private key path; отдельное управление passphrase пока не моделируется.
 - Frontend - это встроенный операционный dashboard, а не отдельное SPA.
 
 ---
