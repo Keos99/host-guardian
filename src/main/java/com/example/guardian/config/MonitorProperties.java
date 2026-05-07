@@ -25,6 +25,7 @@ public class MonitorProperties {
 
     private Duration interval = Duration.ofSeconds(30);
     private Command command = new Command();
+    private Ssh ssh = new Ssh();
 
     /**
      * Возвращает интервал между последовательными циклами мониторинга.
@@ -50,6 +51,14 @@ public class MonitorProperties {
 
     public void setCommand(Command command) {
         this.command = command;
+    }
+
+    public Ssh getSsh() {
+        return ssh;
+    }
+
+    public void setSsh(Ssh ssh) {
+        this.ssh = ssh;
     }
 
     public static class Command {
@@ -125,6 +134,33 @@ public class MonitorProperties {
 
         public void setSshConnectTimeout(Duration sshConnectTimeout) {
             this.sshConnectTimeout = sshConnectTimeout;
+        }
+    }
+
+    public static class Ssh {
+
+        private Provider provider = Provider.SYSTEM;
+        private boolean strictHostKeyChecking;
+
+        public Provider getProvider() {
+            return provider;
+        }
+
+        public void setProvider(Provider provider) {
+            this.provider = provider;
+        }
+
+        public boolean isStrictHostKeyChecking() {
+            return strictHostKeyChecking;
+        }
+
+        public void setStrictHostKeyChecking(boolean strictHostKeyChecking) {
+            this.strictHostKeyChecking = strictHostKeyChecking;
+        }
+
+        public enum Provider {
+            SYSTEM,
+            JSCH
         }
     }
 }

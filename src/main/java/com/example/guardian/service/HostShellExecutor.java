@@ -1,11 +1,10 @@
 package com.example.guardian.service;
 
-import com.example.guardian.model.HostConfig;
 import com.example.guardian.config.MonitorProperties;
+import com.example.guardian.model.HostConfig;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -20,6 +19,7 @@ import java.util.List;
 public class HostShellExecutor {
 
     private final CommandExecutor commandExecutor;
+    private final List<SshCommandProvider> sshProviders;
     private final MonitorProperties monitorProperties;
 
     /**
@@ -27,8 +27,11 @@ public class HostShellExecutor {
      *
      * @param commandExecutor low-level command execution component
      */
-    public HostShellExecutor(CommandExecutor commandExecutor, MonitorProperties monitorProperties) {
+    public HostShellExecutor(CommandExecutor commandExecutor,
+                             List<SshCommandProvider> sshProviders,
+                             MonitorProperties monitorProperties) {
         this.commandExecutor = commandExecutor;
+        this.sshProviders = sshProviders;
         this.monitorProperties = monitorProperties;
     }
 
@@ -48,32 +51,14 @@ public class HostShellExecutor {
             return commandExecutor.execute(List.of("bash", "-lc", shellCommand), timeout);
         }
 
-        List<String> command = new ArrayList<>();
-        command.add("ssh");
-        command.add("-o");
-        command.add("BatchMode=yes");
-        command.add("-o");
-        command.add("ConnectTimeout=" + Math.max(1, monitorProperties.getCommand().getSshConnectTimeout().toSeconds()));
-        command.add("-p");
-        command.add(String.valueOf(host.getSshPort()));
-
-        if (host.getPrivateKeyPath() != null && !host.getPrivateKeyPath().isBlank()) {
-            command.add("-i");
-            command.add(host.getPrivateKeyPath());
-        }
-
-        command.add(host.getSshUser() + "@" + host.getAddress());
-        command.add("bash -lc " + shellQuote(shellCommand));
-        return commandExecutor.execute(command, timeout);
-    }
-
-    /**
-     * Quotes a value so it can be passed as a single shell argument.
-     *
-     * @param value raw shell argument value
-     * @return safely single-quoted shell argument
-     */
-    private String shellQuote(String value) {
-        return "'" + value.replace("'", "'\"'\"'") + "'";
+        return sshProviders.stream()
+                .filter(provider -> provider.provider() == monitorProperties.getSsh().getProvider())
+                .findFirst()
+                .map(provider -> provider.execute(host, shellCommand, timeout))
+                .orElseGet(() -> new CommandExecutor.CommandResult(
+                        -1,
+                        "",
+                        "SSH provider is not available: " + monitorProperties.getSsh().getProvider()
+                ));
     }
 }
