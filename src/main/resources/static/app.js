@@ -1,25 +1,33 @@
+const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
+
 const state = {
     hosts: [],
     groups: [],
-    dashboard: null
+    dashboard: null,
+    dashboardRefreshInFlight: null,
+    dashboardRefreshTimerId: null,
+    dashboardRequestSeq: 0
 };
 
 document.addEventListener("DOMContentLoaded", () => {
     bindEvents();
     refreshAll().catch(handleError);
+    startDashboardPolling();
 });
 
 function bindEvents() {
-    document.getElementById("refreshDashboardButton").addEventListener("click", () => refreshAll().catch(handleError));
+    document.getElementById("refreshDashboardButton").addEventListener("click", (event) => {
+        runWithButtonBusy(event.currentTarget, () => refreshDashboard()).catch(handleError);
+    });
     document.getElementById("clearGroupFilterButton").addEventListener("click", () => {
         clearMultiSelect(document.getElementById("groupFilter"));
-        loadDashboard().catch(handleError);
+        refreshDashboard().catch(handleError);
     });
-    document.getElementById("groupFilter").addEventListener("change", () => loadDashboard().catch(handleError));
+    document.getElementById("groupFilter").addEventListener("change", () => refreshDashboard().catch(handleError));
 
-    document.getElementById("serviceForm").addEventListener("submit", submitServiceForm);
-    document.getElementById("hostForm").addEventListener("submit", submitHostForm);
-    document.getElementById("groupForm").addEventListener("submit", submitGroupForm);
+    document.getElementById("serviceForm").addEventListener("submit", (event) => submitServiceForm(event).catch(handleError));
+    document.getElementById("hostForm").addEventListener("submit", (event) => submitHostForm(event).catch(handleError));
+    document.getElementById("groupForm").addEventListener("submit", (event) => submitGroupForm(event).catch(handleError));
 
     document.getElementById("resetServiceFormButton").addEventListener("click", resetServiceForm);
     document.getElementById("resetHostFormButton").addEventListener("click", resetHostForm);
@@ -27,15 +35,49 @@ function bindEvents() {
 
     document.getElementById("hostConnectionMode").addEventListener("change", updateHostConnectionModeFields);
 
-    document.getElementById("servicesTableBody").addEventListener("click", onServicesTableClick);
-    document.getElementById("hostsTableBody").addEventListener("click", onHostsTableClick);
-    document.getElementById("groupsTableBody").addEventListener("click", onGroupsTableClick);
+    document.getElementById("servicesTableBody").addEventListener("click", (event) => onServicesTableClick(event).catch(handleError));
+    document.getElementById("hostsTableBody").addEventListener("click", (event) => onHostsTableClick(event).catch(handleError));
+    document.getElementById("groupsTableBody").addEventListener("click", (event) => onGroupsTableClick(event).catch(handleError));
 }
 
 async function refreshAll() {
     await Promise.all([loadHosts(), loadGroups()]);
-    await loadDashboard();
+    await refreshDashboard();
     updateHostConnectionModeFields();
+}
+
+function startDashboardPolling() {
+    if (state.dashboardRefreshTimerId) {
+        window.clearInterval(state.dashboardRefreshTimerId);
+    }
+
+    state.dashboardRefreshTimerId = window.setInterval(() => {
+        refreshDashboard({silent: true, skipIfBusy: true});
+    }, DASHBOARD_REFRESH_INTERVAL_MS);
+}
+
+async function refreshDashboard(options = {}) {
+    const {silent = false, skipIfBusy = false} = options;
+    if (skipIfBusy && state.dashboardRefreshInFlight) {
+        return state.dashboardRefreshInFlight;
+    }
+
+    const refresh = loadDashboard().catch((error) => {
+        if (silent) {
+            console.error(error);
+        } else {
+            handleError(error);
+        }
+    });
+
+    state.dashboardRefreshInFlight = refresh;
+    refresh.finally(() => {
+        if (state.dashboardRefreshInFlight === refresh) {
+            state.dashboardRefreshInFlight = null;
+        }
+    });
+
+    return refresh;
 }
 
 async function loadHosts() {
@@ -55,7 +97,13 @@ async function loadDashboard() {
     const params = new URLSearchParams();
     getSelectedValues(document.getElementById("groupFilter")).forEach((value) => params.append("groupId", value));
     const url = params.toString() ? `/api/dashboard?${params}` : "/api/dashboard";
-    state.dashboard = await requestJson(url);
+    const requestSeq = ++state.dashboardRequestSeq;
+    const dashboard = await requestJson(url);
+    if (requestSeq !== state.dashboardRequestSeq) {
+        return;
+    }
+
+    state.dashboard = dashboard;
     renderSummary(state.dashboard.summary);
     renderServicesTable(state.dashboard.services);
 }
@@ -192,85 +240,91 @@ function renderGroupsTable() {
 async function submitServiceForm(event) {
     event.preventDefault();
 
-    const id = document.getElementById("serviceId").value;
-    const payload = {
-        name: document.getElementById("serviceName").value,
-        hostId: Number(document.getElementById("serviceHostId").value),
-        groupId: document.getElementById("serviceGroupId").value ? Number(document.getElementById("serviceGroupId").value) : null,
-        processMatch: document.getElementById("serviceProcessMatch").value,
-        restartCommand: document.getElementById("serviceRestartCommand").value,
-        healthUrl: document.getElementById("serviceHealthUrl").value || null,
-        healthTimeoutSeconds: Number(document.getElementById("serviceHealthTimeoutSeconds").value),
-        restartCooldownSeconds: Number(document.getElementById("serviceRestartCooldownSeconds").value),
-        restartWindowSeconds: Number(document.getElementById("serviceRestartWindowSeconds").value),
-        maxRestartsInWindow: Number(document.getElementById("serviceMaxRestartsInWindow").value),
-        monitoringEnabled: document.getElementById("serviceMonitoringEnabled").checked,
-        description: document.getElementById("serviceDescription").value || null
-    };
+    await runWithButtonBusy(getSubmitButton(event), async () => {
+        const id = document.getElementById("serviceId").value;
+        const payload = {
+            name: document.getElementById("serviceName").value,
+            hostId: Number(document.getElementById("serviceHostId").value),
+            groupId: document.getElementById("serviceGroupId").value ? Number(document.getElementById("serviceGroupId").value) : null,
+            processMatch: document.getElementById("serviceProcessMatch").value,
+            restartCommand: document.getElementById("serviceRestartCommand").value,
+            healthUrl: document.getElementById("serviceHealthUrl").value || null,
+            healthTimeoutSeconds: Number(document.getElementById("serviceHealthTimeoutSeconds").value),
+            restartCooldownSeconds: Number(document.getElementById("serviceRestartCooldownSeconds").value),
+            restartWindowSeconds: Number(document.getElementById("serviceRestartWindowSeconds").value),
+            maxRestartsInWindow: Number(document.getElementById("serviceMaxRestartsInWindow").value),
+            monitoringEnabled: document.getElementById("serviceMonitoringEnabled").checked,
+            description: document.getElementById("serviceDescription").value || null
+        };
 
-    const method = id ? "PUT" : "POST";
-    const url = id ? `/api/services/${id}` : "/api/services";
+        const method = id ? "PUT" : "POST";
+        const url = id ? `/api/services/${id}` : "/api/services";
 
-    await requestJson(url, {
-        method,
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
+        await requestJson(url, {
+            method,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+
+        showToast("Конфигурация сервиса сохранена.");
+        resetServiceForm();
+        await refreshDashboard();
     });
-
-    showToast("Конфигурация сервиса сохранена.");
-    resetServiceForm();
-    await refreshAll();
 }
 
 async function submitHostForm(event) {
     event.preventDefault();
 
-    const id = document.getElementById("hostId").value;
-    const payload = {
-        name: document.getElementById("hostName").value,
-        connectionMode: document.getElementById("hostConnectionMode").value,
-        address: document.getElementById("hostAddress").value,
-        sshPort: Number(document.getElementById("hostSshPort").value),
-        sshUser: document.getElementById("hostSshUser").value || null,
-        privateKeyPath: document.getElementById("hostPrivateKeyPath").value || null,
-        description: document.getElementById("hostDescription").value || null
-    };
+    await runWithButtonBusy(getSubmitButton(event), async () => {
+        const id = document.getElementById("hostId").value;
+        const payload = {
+            name: document.getElementById("hostName").value,
+            connectionMode: document.getElementById("hostConnectionMode").value,
+            address: document.getElementById("hostAddress").value,
+            sshPort: Number(document.getElementById("hostSshPort").value),
+            sshUser: document.getElementById("hostSshUser").value || null,
+            privateKeyPath: document.getElementById("hostPrivateKeyPath").value || null,
+            description: document.getElementById("hostDescription").value || null
+        };
 
-    const method = id ? "PUT" : "POST";
-    const url = id ? `/api/hosts/${id}` : "/api/hosts";
+        const method = id ? "PUT" : "POST";
+        const url = id ? `/api/hosts/${id}` : "/api/hosts";
 
-    await requestJson(url, {
-        method,
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
+        await requestJson(url, {
+            method,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+
+        showToast("Хост сохранен.");
+        resetHostForm();
+        await refreshAll();
     });
-
-    showToast("Хост сохранен.");
-    resetHostForm();
-    await refreshAll();
 }
 
 async function submitGroupForm(event) {
     event.preventDefault();
 
-    const id = document.getElementById("groupId").value;
-    const payload = {
-        name: document.getElementById("groupName").value,
-        description: document.getElementById("groupDescription").value || null
-    };
+    await runWithButtonBusy(getSubmitButton(event), async () => {
+        const id = document.getElementById("groupId").value;
+        const payload = {
+            name: document.getElementById("groupName").value,
+            description: document.getElementById("groupDescription").value || null
+        };
 
-    const method = id ? "PUT" : "POST";
-    const url = id ? `/api/groups/${id}` : "/api/groups";
+        const method = id ? "PUT" : "POST";
+        const url = id ? `/api/groups/${id}` : "/api/groups";
 
-    await requestJson(url, {
-        method,
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
+        await requestJson(url, {
+            method,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+
+        showToast("Группа сохранена.");
+        resetGroupForm();
+        await refreshAll();
     });
-
-    showToast("Группа сохранена.");
-    resetGroupForm();
-    await refreshAll();
 }
 
 async function onServicesTableClick(event) {
@@ -288,24 +342,30 @@ async function onServicesTableClick(event) {
     }
 
     if (action === "toggle-monitoring") {
-        const enabled = button.dataset.enabled === "true";
-        await requestJson(`/api/services/${id}/monitoring?enabled=${String(!enabled)}`, {method: "PATCH"});
-        showToast(enabled ? "Мониторинг приостановлен." : "Мониторинг включен.");
-        await refreshAll();
+        await runWithButtonBusy(button, async () => {
+            const enabled = button.dataset.enabled === "true";
+            await requestJson(`/api/services/${id}/monitoring?enabled=${String(!enabled)}`, {method: "PATCH"});
+            showToast(enabled ? "Мониторинг приостановлен." : "Мониторинг включен.");
+            await refreshDashboard();
+        });
         return;
     }
 
     if (action === "restart") {
-        await requestVoid(`/api/services/${id}/restart`, {method: "POST"});
-        showToast("Команда рестарта отправлена.");
-        await refreshAll();
+        await runWithButtonBusy(button, async () => {
+            await requestVoid(`/api/services/${id}/restart`, {method: "POST"});
+            showToast("Команда рестарта отправлена.");
+            await refreshDashboard();
+        });
         return;
     }
 
     if (action === "check") {
-        await requestVoid(`/api/services/${id}/check`, {method: "POST"});
-        showToast("Проверка сервиса выполнена.");
-        await refreshAll();
+        await runWithButtonBusy(button, async () => {
+            await requestVoid(`/api/services/${id}/check`, {method: "POST"});
+            showToast("Проверка сервиса выполнена.");
+            await refreshDashboard();
+        });
         return;
     }
 
@@ -313,9 +373,11 @@ async function onServicesTableClick(event) {
         if (!window.confirm("Удалить сервис?")) {
             return;
         }
-        await requestVoid(`/api/services/${id}`, {method: "DELETE"});
-        showToast("Сервис удален.");
-        await refreshAll();
+        await runWithButtonBusy(button, async () => {
+            await requestVoid(`/api/services/${id}`, {method: "DELETE"});
+            showToast("Сервис удален.");
+            await refreshDashboard();
+        });
     }
 }
 
@@ -337,9 +399,11 @@ async function onHostsTableClick(event) {
         if (!window.confirm("Удалить хост?")) {
             return;
         }
-        await requestVoid(`/api/hosts/${id}`, {method: "DELETE"});
-        showToast("Хост удален.");
-        await refreshAll();
+        await runWithButtonBusy(button, async () => {
+            await requestVoid(`/api/hosts/${id}`, {method: "DELETE"});
+            showToast("Хост удален.");
+            await refreshAll();
+        });
     }
 }
 
@@ -361,10 +425,44 @@ async function onGroupsTableClick(event) {
         if (!window.confirm("Удалить группу?")) {
             return;
         }
-        await requestVoid(`/api/groups/${id}`, {method: "DELETE"});
-        showToast("Группа удалена.");
-        await refreshAll();
+        await runWithButtonBusy(button, async () => {
+            await requestVoid(`/api/groups/${id}`, {method: "DELETE"});
+            showToast("Группа удалена.");
+            await refreshAll();
+        });
     }
+}
+
+function getSubmitButton(event) {
+    return event.submitter ?? event.currentTarget?.querySelector('button[type="submit"]') ?? null;
+}
+
+async function runWithButtonBusy(button, action) {
+    setButtonBusy(button, true);
+    try {
+        return await action();
+    } finally {
+        setButtonBusy(button, false);
+    }
+}
+
+function setButtonBusy(button, busy) {
+    if (!button) {
+        return;
+    }
+
+    if (busy) {
+        button.dataset.wasDisabled = String(button.disabled);
+        button.disabled = true;
+        button.classList.add("is-loading");
+        button.setAttribute("aria-busy", "true");
+        return;
+    }
+
+    button.disabled = button.dataset.wasDisabled === "true";
+    delete button.dataset.wasDisabled;
+    button.classList.remove("is-loading");
+    button.removeAttribute("aria-busy");
 }
 
 function editService(id) {

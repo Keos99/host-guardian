@@ -235,6 +235,11 @@ textarea {
     border: 0;
     border-radius: 999px;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
     transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
 }
 
@@ -246,6 +251,36 @@ textarea {
 .button {
     padding: 12px 18px;
     font-weight: 700;
+}
+
+.button:disabled,
+.mini-button:disabled {
+    cursor: wait;
+    opacity: 0.72;
+    transform: none;
+}
+
+.button.is-loading,
+.mini-button.is-loading {
+    pointer-events: none;
+}
+
+.button.is-loading::before,
+.mini-button.is-loading::before {
+    content: "";
+    width: 0.9em;
+    height: 0.9em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    animation: button-spin 700ms linear infinite;
+}
+
+@keyframes button-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .button-primary {
@@ -408,5 +443,15 @@ textarea {
     .panel-header {
         align-items: start;
         flex-direction: column;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .button,
+    .mini-button,
+    .button.is-loading::before,
+    .mini-button.is-loading::before {
+        animation: none;
+        transition: none;
     }
 }
