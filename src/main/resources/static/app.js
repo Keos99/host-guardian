@@ -4,6 +4,7 @@ const state = {
     hosts: [],
     groups: [],
     dashboard: null,
+    activeTab: "dashboard",
     dashboardRefreshInFlight: null,
     dashboardRefreshTimerId: null,
     dashboardRequestSeq: 0
@@ -11,6 +12,7 @@ const state = {
 
 document.addEventListener("DOMContentLoaded", () => {
     bindEvents();
+    initializeTabs();
     refreshAll().catch(handleError);
     startDashboardPolling();
 });
@@ -35,6 +37,7 @@ function bindEvents() {
 
     document.getElementById("hostConnectionMode").addEventListener("change", updateHostConnectionModeFields);
     document.getElementById("serviceManualRestartEnabled").addEventListener("change", updateRestartCommandMode);
+    document.getElementById("tabSwitchButton").addEventListener("click", toggleActiveTab);
 
     document.getElementById("servicesTableBody").addEventListener("click", (event) => onServicesTableClick(event).catch(handleError));
     document.getElementById("hostsTableBody").addEventListener("click", (event) => onHostsTableClick(event).catch(handleError));
@@ -86,6 +89,7 @@ async function loadHosts() {
     state.hosts = await requestJson("/api/hosts");
     renderHostsTable();
     populateHostSelect();
+    updateTabViewportHeight();
 }
 
 async function loadGroups() {
@@ -93,6 +97,7 @@ async function loadGroups() {
     renderGroupsTable();
     populateGroupFilter();
     populateServiceGroupSelect();
+    updateTabViewportHeight();
 }
 
 async function loadDashboard() {
@@ -108,6 +113,51 @@ async function loadDashboard() {
     state.dashboard = dashboard;
     renderSummary(state.dashboard.summary);
     renderServicesTable(state.dashboard.services);
+    updateTabViewportHeight();
+}
+
+function initializeTabs() {
+    setActiveTab(state.activeTab);
+    window.addEventListener("resize", updateTabViewportHeight);
+}
+
+function toggleActiveTab() {
+    setActiveTab(state.activeTab === "dashboard" ? "configuration" : "dashboard");
+}
+
+function setActiveTab(tabName) {
+    state.activeTab = tabName;
+    const isConfiguration = tabName === "configuration";
+    const track = document.getElementById("tabsTrack");
+    const dashboardTab = document.getElementById("dashboardTab");
+    const configurationTab = document.getElementById("configurationTab");
+    const switchButton = document.getElementById("tabSwitchButton");
+    const switchIcon = document.getElementById("tabSwitchIcon");
+    const switchText = document.getElementById("tabSwitchText");
+    const label = isConfiguration ? "Открыть dashboard" : "Открыть настройки";
+
+    track.classList.toggle("is-configuration", isConfiguration);
+    dashboardTab.classList.toggle("is-active", !isConfiguration);
+    configurationTab.classList.toggle("is-active", isConfiguration);
+    dashboardTab.setAttribute("aria-hidden", String(isConfiguration));
+    configurationTab.setAttribute("aria-hidden", String(!isConfiguration));
+    switchButton.classList.toggle("is-back", isConfiguration);
+    switchButton.setAttribute("aria-label", label);
+    switchButton.setAttribute("title", label);
+    switchIcon.textContent = isConfiguration ? "<" : ">";
+    switchText.textContent = label;
+
+    updateTabViewportHeight();
+}
+
+function updateTabViewportHeight() {
+    const viewport = document.getElementById("tabsViewport");
+    const activeTab = document.getElementById(state.activeTab === "configuration" ? "configurationTab" : "dashboardTab");
+    if (!viewport || !activeTab) {
+        return;
+    }
+
+    viewport.style.height = `${activeTab.scrollHeight}px`;
 }
 
 function populateHostSelect() {
@@ -496,6 +546,7 @@ function editService(id) {
             document.getElementById("serviceMonitoringEnabled").checked = fullService.monitoringEnabled;
             document.getElementById("serviceDescription").value = fullService.description ?? "";
             updateRestartCommandMode();
+            setActiveTab("configuration");
             window.scrollTo({top: document.getElementById("serviceForm").offsetTop - 40, behavior: "smooth"});
         })
         .catch(handleError);
@@ -516,6 +567,7 @@ function editHost(id) {
     document.getElementById("hostPrivateKeyPath").value = host.privateKeyPath ?? "";
     document.getElementById("hostDescription").value = host.description ?? "";
     updateHostConnectionModeFields();
+    setActiveTab("configuration");
     window.scrollTo({top: document.getElementById("hostForm").offsetTop - 40, behavior: "smooth"});
 }
 
@@ -528,6 +580,7 @@ function editGroup(id) {
     document.getElementById("groupId").value = group.id;
     document.getElementById("groupName").value = group.name;
     document.getElementById("groupDescription").value = group.description ?? "";
+    setActiveTab("configuration");
     window.scrollTo({top: document.getElementById("groupForm").offsetTop - 40, behavior: "smooth"});
 }
 

@@ -30,6 +30,9 @@ function createElement(id = "") {
         innerHTML: "",
         textContent: "",
         dataset: {},
+        style: {},
+        scrollHeight: 480,
+        offsetTop: 0,
         selectedOptions: [],
         options: [],
         classList: createClassList(),
@@ -86,6 +89,7 @@ function loadApp(fetchImpl = async () => jsonResponse({summary: emptySummary(), 
 
     const window = {
         confirm: () => true,
+        addEventListener: () => {},
         clearInterval: () => {},
         clearTimeout: () => {},
         scrollTo: () => {},
@@ -289,4 +293,36 @@ test("dashboard renders pid and off for services without health-check url", () =
     assert.match(tbody.innerHTML, />1234</);
     assert.match(tbody.innerHTML, /health-off/);
     assert.match(tbody.innerHTML, />off</);
+});
+
+test("floating tab button switches between dashboard and configuration with swipe state", () => {
+    const {context} = loadApp();
+    const element = (id) => context.document.getElementById(id);
+
+    element("dashboardTab").scrollHeight = 320;
+    element("configurationTab").scrollHeight = 840;
+
+    context.initializeTabs();
+
+    assert.equal(element("tabsTrack").classList.contains("is-configuration"), false);
+    assert.equal(element("dashboardTab").getAttribute("aria-hidden"), "false");
+    assert.equal(element("configurationTab").getAttribute("aria-hidden"), "true");
+    assert.equal(element("tabsViewport").style.height, "320px");
+    assert.equal(element("tabSwitchIcon").textContent, ">");
+
+    context.toggleActiveTab();
+
+    assert.equal(element("tabsTrack").classList.contains("is-configuration"), true);
+    assert.equal(element("dashboardTab").getAttribute("aria-hidden"), "true");
+    assert.equal(element("configurationTab").getAttribute("aria-hidden"), "false");
+    assert.equal(element("tabsViewport").style.height, "840px");
+    assert.equal(element("tabSwitchButton").classList.contains("is-back"), true);
+    assert.equal(element("tabSwitchButton").getAttribute("aria-label"), "Открыть dashboard");
+    assert.equal(element("tabSwitchIcon").textContent, "<");
+
+    context.toggleActiveTab();
+
+    assert.equal(element("tabsTrack").classList.contains("is-configuration"), false);
+    assert.equal(element("dashboardTab").getAttribute("aria-hidden"), "false");
+    assert.equal(element("configurationTab").getAttribute("aria-hidden"), "true");
 });

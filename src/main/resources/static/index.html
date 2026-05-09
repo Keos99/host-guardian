@@ -32,7 +32,10 @@
 
     <section id="toast" class="toast hidden" aria-live="polite"></section>
 
-    <section class="summary-grid" id="summaryGrid"></section>
+    <div id="tabsViewport" class="tabs-viewport">
+        <div id="tabsTrack" class="tabs-track">
+            <section id="dashboardTab" class="tab-page is-active" data-tab="dashboard" role="tabpanel" aria-label="Dashboard">
+                <section class="summary-grid" id="summaryGrid"></section>
 
     <section class="panel">
         <div class="panel-header">
@@ -66,8 +69,11 @@
         </div>
     </section>
 
-    <section class="workspace-grid">
-        <article class="panel panel-large">
+            </section>
+
+            <section id="configurationTab" class="tab-page" data-tab="configuration" role="tabpanel" aria-label="Configuration" aria-hidden="true">
+                <section class="workspace-grid">
+                    <article class="panel panel-large">
             <div class="panel-header">
                 <div>
                     <p class="panel-kicker">Service Config</p>
@@ -162,10 +168,10 @@
                     <button id="resetServiceFormButton" class="button button-secondary" type="button">Очистить форму</button>
                 </div>
             </form>
-        </article>
+                    </article>
 
-        <div class="stack">
-            <article class="panel">
+                    <div class="stack">
+                        <article class="panel">
                 <div class="panel-header">
                     <div>
                         <p class="panel-kicker">Hosts</p>
@@ -233,9 +239,9 @@
                         <tbody id="hostsTableBody"></tbody>
                     </table>
                 </div>
-            </article>
+                        </article>
 
-            <article class="panel">
+                        <article class="panel">
                 <div class="panel-header">
                     <div>
                         <p class="panel-kicker">Groups</p>
@@ -274,10 +280,18 @@
                         <tbody id="groupsTableBody"></tbody>
                     </table>
                 </div>
-            </article>
+                        </article>
+                    </div>
+                </section>
+            </section>
         </div>
-    </section>
+    </div>
 </main>
+
+<button id="tabSwitchButton" class="tab-switch-button" type="button" aria-label="Открыть настройки" title="Открыть настройки">
+    <span id="tabSwitchIcon" aria-hidden="true">&gt;</span>
+    <span id="tabSwitchText" class="sr-only">Открыть настройки</span>
+</button>
 
 <script src="/app.js"></script>
 </body>
