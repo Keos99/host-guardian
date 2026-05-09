@@ -13,7 +13,7 @@ The project combines:
 
 - background process monitoring;
 - optional HTTP health checks;
-- automatic and manual restarts;
+- automatic start recovery and checked manual restarts;
 - host-aware execution through `LOCAL` or `SSH` with selectable SSH providers;
 - configuration stored in the database;
 - built-in web dashboard for operations.
@@ -48,7 +48,7 @@ Host Guardian addresses that by moving service definitions into the database, at
 - Optional HTTP health checks.
 - Optional service execution path used before start and manual restart commands.
 - Required start command per service.
-- Automatic kill-based restart or manually entered restart command, followed by the start command.
+- Start-only recovery for missing services and checked manual restart flow for failed health checks.
 - Cooldown and restart-window protection for restart attempts.
 - Manual `restart` and manual `check` actions through REST API and dashboard.
 - Built-in dashboard for creating, editing, deleting, filtering, and operating monitored services.
@@ -104,9 +104,9 @@ flowchart LR
    finds a matching process and persists the latest PID,
    verifies process liveness with the PID,
    optionally runs HTTP health check,
-   evaluates restart policy,
-   performs a kill-based or manual restart action,
-   executes the configured start command locally or through SSH if needed.
+   evaluates recovery policy,
+   executes only the configured start command when the service is missing,
+   leaves failed health checks visible until an operator triggers restart.
 4. The latest runtime state is exposed through the dashboard API.
 
 ---
@@ -405,7 +405,7 @@ Base UI and API are served from the same application.
 | `PUT` | `/api/services/{id}` | Update service |
 | `DELETE` | `/api/services/{id}` | Delete service |
 | `PATCH` | `/api/services/{id}/monitoring?enabled=true|false` | Pause/resume monitoring |
-| `POST` | `/api/services/{id}/restart` | Trigger manual restart |
+| `POST` | `/api/services/{id}/restart` | Trigger checked restart/start recovery |
 | `POST` | `/api/services/{id}/check` | Trigger immediate check |
 
 ### Dashboard
@@ -435,7 +435,7 @@ Group filtering is supported through repeated query params:
 nohup java -jar billing-service.jar >> /var/log/billing-service.log 2>&1 &
 ```
 
-- Manual restart command enabled: no. Host Guardian finds and stops the matched process, escalates to `kill -9` after timeout, then runs the start command.
+- Manual restart command enabled: no. If the service is missing, Host Guardian runs only the start command. If the operator clicks restart and the configured health-check fails, Host Guardian finds and stops the matched process, escalates to `kill -9` after timeout, then runs the start command.
 - Health URL: `http://127.0.0.1:8085/actuator/health`
 
 ### Example 2: Remote app on another server

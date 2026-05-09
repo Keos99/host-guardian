@@ -308,16 +308,16 @@ public class MonitoredServiceController {
     }
 
     /**
-     * Triggers the configured restart command immediately.
+     * Triggers an immediate checked recovery action for a service.
      *
      * @param id service identifier
      */
     @Operation(
             summary = "Restart service now",
             description = """
-                    Executes the service's configured restart command immediately on its host.
-                    Manual restarts bypass automatic cooldown and rolling-window limits because
-                    the action is initiated explicitly by an operator.
+                    Checks the current service state before executing commands. If the service
+                    process is missing, only the start command is executed. The restart flow is
+                    executed only when a health-check URL is configured and that health-check fails.
                     """
     )
     @ApiResponses({
@@ -348,8 +348,8 @@ public class MonitoredServiceController {
             summary = "Check service now",
             description = """
                     Runs a single monitoring pass for the service immediately. The check updates in-memory
-                    runtime state and may trigger an automatic restart if the service is unhealthy and
-                    restart policy allows it.
+                    runtime state and may execute only the start command when the service process is missing
+                    and recovery policy allows it.
                     """
     )
     @ApiResponses({

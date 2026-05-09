@@ -115,8 +115,6 @@ class ServiceMonitorTest {
                 .thenReturn(Optional.of(new LinuxProcessInspector.ProcessInfo(1234L, "java -jar billing-api.jar")));
         when(processInspector.isPidRunning(service.getHost(), 1234L)).thenReturn(false);
         when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
-        when(hostShellExecutor.execute(eq(service.getHost()), eq(service.getRestartCommand()), any()))
-                .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
         when(hostShellExecutor.execute(eq(service.getHost()), eq(service.getStartCommand()), any()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -125,6 +123,8 @@ class ServiceMonitorTest {
         ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.RESTARTING);
         assertThat(snapshot.processRunning()).isFalse();
+        assertThat(snapshot.lastMessage()).isEqualTo("Start command executed successfully");
+        verify(hostShellExecutor, never()).execute(eq(service.getHost()), eq(service.getRestartCommand()), any());
     }
 
     @Test
@@ -160,7 +160,7 @@ class ServiceMonitorTest {
     }
 
     @Test
-    void checkAllRunsManualRestartThenStartFromExecutionPath() {
+    void checkAllStartsMissingServiceFromExecutionPathWithoutManualRestart() {
         MonitoredService service = monitoredService(1);
         service.setExecutionPath("/opt/billing");
         service.setRestartCommand("./stop.sh");
@@ -169,8 +169,6 @@ class ServiceMonitorTest {
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
         when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
-        when(hostShellExecutor.execute(service.getHost(), "cd '/opt/billing' && ./stop.sh", monitorProperties.getCommand().getRestartTimeout()))
-                .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
         when(hostShellExecutor.execute(service.getHost(), "cd '/opt/billing' && ./start.sh", monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -178,15 +176,14 @@ class ServiceMonitorTest {
 
         ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.RESTARTING);
-        assertThat(snapshot.lastMessage()).isEqualTo("Restart and start commands executed successfully");
+        assertThat(snapshot.lastMessage()).isEqualTo("Start command executed successfully");
         assertThat(snapshot.lastRestartAt()).isNotNull();
-        InOrder inOrder = inOrder(hostShellExecutor);
-        inOrder.verify(hostShellExecutor).execute(service.getHost(), "cd '/opt/billing' && ./stop.sh", monitorProperties.getCommand().getRestartTimeout());
-        inOrder.verify(hostShellExecutor).execute(service.getHost(), "cd '/opt/billing' && ./start.sh", monitorProperties.getCommand().getStartTimeout());
+        verify(hostShellExecutor, never()).execute(service.getHost(), "cd '/opt/billing' && ./stop.sh", monitorProperties.getCommand().getRestartTimeout());
+        verify(hostShellExecutor).execute(service.getHost(), "cd '/opt/billing' && ./start.sh", monitorProperties.getCommand().getStartTimeout());
     }
 
     @Test
-    void checkAllUsesAutomaticKillThenStartWhenManualRestartIsDisabled() {
+    void checkAllStartsMissingServiceWithoutAutomaticKillWhenManualRestartIsDisabled() {
         MonitoredService service = monitoredService(1);
         service.setManualRestartEnabled(false);
         service.setStartCommand("./start.sh");
@@ -194,44 +191,40 @@ class ServiceMonitorTest {
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
         when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
-        when(processInspector.stop(service.getHost(), service.getProcessMatch(), 1234L, monitorProperties.getCommand().getStopTimeout()))
-                .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
         when(hostShellExecutor.execute(service.getHost(), "./start.sh", monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
         monitor.checkAll();
 
         assertThat(monitor.getRuntimeSnapshot(1L).orElseThrow().status()).isEqualTo(ServiceHealthStatus.RESTARTING);
-        verify(processInspector).stop(service.getHost(), service.getProcessMatch(), 1234L, monitorProperties.getCommand().getStopTimeout());
+        verify(processInspector, never()).stop(service.getHost(), service.getProcessMatch(), 1234L, monitorProperties.getCommand().getStopTimeout());
         verify(hostShellExecutor).execute(service.getHost(), "./start.sh", monitorProperties.getCommand().getStartTimeout());
     }
 
     @Test
-    void checkAllStoresRestartErrorMessageFromCommandResult() {
+    void checkAllStoresStartErrorMessageFromCommandResult() {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
         when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
-        when(hostShellExecutor.execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout()))
+        when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(1, "command output", " "));
 
         monitor.checkAll();
 
         ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.ERROR);
-        assertThat(snapshot.lastMessage()).isEqualTo("Restart failed: command output");
-        verify(hostShellExecutor, never()).execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout());
+        assertThat(snapshot.lastMessage()).isEqualTo("Start failed: command output");
+        verify(hostShellExecutor, never()).execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout());
     }
 
     @Test
-    void checkAllBlocksSecondRestartDuringCooldown() {
+    void checkAllBlocksSecondStartDuringCooldown() {
         MonitoredService service = monitoredService(1);
         service.setRestartCooldownSeconds(3600);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
         when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
-        when(hostShellExecutor.execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout()))
-                .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -240,8 +233,8 @@ class ServiceMonitorTest {
 
         ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.DOWN);
-        assertThat(snapshot.lastMessage()).isEqualTo("Process is missing and health-check failed. Restart blocked by policy");
-        verify(hostShellExecutor, times(1))
+        assertThat(snapshot.lastMessage()).isEqualTo("Process is missing and health-check failed. Start blocked by policy");
+        verify(hostShellExecutor, never())
                 .execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout());
         verify(hostShellExecutor, times(1))
                 .execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout());
@@ -294,9 +287,11 @@ class ServiceMonitorTest {
     }
 
     @Test
-    void restartNowBypassesHealthChecksAndUpdatesSnapshot() {
+    void restartNowRunsRestartOnlyWhenConfiguredHealthCheckFails() {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
+        stubProcessFound(service, 1234L);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
         when(hostShellExecutor.execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
@@ -307,7 +302,60 @@ class ServiceMonitorTest {
         Optional<ServiceRuntimeSnapshot> snapshot = monitor.getRuntimeSnapshot(1L);
         assertThat(snapshot).isPresent();
         assertThat(snapshot.orElseThrow().status()).isEqualTo(ServiceHealthStatus.RESTARTING);
-        verify(processInspector, never()).findFirst(any(), any());
+        InOrder inOrder = inOrder(hostShellExecutor);
+        inOrder.verify(hostShellExecutor).execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout());
+        inOrder.verify(hostShellExecutor).execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout());
+    }
+
+    @Test
+    void restartNowStartsOnlyWhenServiceIsMissing() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
+        stubProcessMissing(service);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
+                .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
+
+        monitor.restartNow(1L);
+
+        ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
+        assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.RESTARTING);
+        assertThat(snapshot.lastMessage()).isEqualTo("Start command executed successfully");
+        verify(hostShellExecutor, never()).execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout());
+        verify(hostShellExecutor).execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout());
+    }
+
+    @Test
+    void restartNowSkipsRestartWhenHealthCheckIsMissing() {
+        MonitoredService service = monitoredService(1);
+        service.setHealthUrl(" ");
+        when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
+        stubProcessFound(service, 1234L);
+
+        monitor.restartNow(1L);
+
+        ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
+        assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.UP);
+        assertThat(snapshot.healthCheckEnabled()).isFalse();
+        assertThat(snapshot.lastMessage()).isEqualTo("Restart skipped: health-check is not configured");
+        verify(healthChecker, never()).isHealthy(any(), any(), any());
+        verify(hostShellExecutor, never()).execute(any(), any(), any());
+    }
+
+    @Test
+    void restartNowSkipsRestartWhenHealthCheckIsHealthy() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
+        stubProcessFound(service, 1234L);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+
+        monitor.restartNow(1L);
+
+        ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
+        assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.UP);
+        assertThat(snapshot.healthCheckPassed()).isTrue();
+        assertThat(snapshot.lastMessage()).isEqualTo("Restart skipped: health-check is healthy");
+        verify(hostShellExecutor, never()).execute(any(), any(), any());
     }
 
     @Test
@@ -333,14 +381,13 @@ class ServiceMonitorTest {
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessFound(service, 1234L);
         when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
-        when(hostShellExecutor.execute(eq(service.getHost()), eq(service.getRestartCommand()), any()))
-                .thenReturn(new CommandExecutor.CommandResult(1, "", "restart failed"));
 
         monitor.checkAll();
 
         ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
-        assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.ERROR);
-        assertThat(snapshot.lastMessage()).isEqualTo("Restart failed: restart failed");
+        assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.DOWN);
+        assertThat(snapshot.lastMessage()).isEqualTo("Health-check failed");
+        verify(hostShellExecutor, never()).execute(any(), any(), any());
     }
 
     private void stubProcessFound(MonitoredService service, long pid) {
