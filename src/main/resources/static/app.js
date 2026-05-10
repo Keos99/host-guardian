@@ -7,6 +7,7 @@ const state = {
     activeTab: "dashboard",
     dashboardRefreshInFlight: null,
     dashboardRefreshTimerId: null,
+    openActionMenuId: null,
     dashboardRequestSeq: 0
 };
 
@@ -18,6 +19,12 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function bindEvents() {
+    document.addEventListener("click", (event) => {
+        if (!event.target.closest?.(".action-menu-shell, .floating-action-menu")) {
+            closeActionMenus();
+        }
+    });
+
     document.getElementById("refreshDashboardButton").addEventListener("click", (event) => {
         runWithButtonBusy(event.currentTarget, () => refreshDashboard()).catch(handleError);
     });
@@ -42,6 +49,8 @@ function bindEvents() {
     document.getElementById("servicesTableBody").addEventListener("click", (event) => onServicesTableClick(event).catch(handleError));
     document.getElementById("hostsTableBody").addEventListener("click", (event) => onHostsTableClick(event).catch(handleError));
     document.getElementById("groupsTableBody").addEventListener("click", (event) => onGroupsTableClick(event).catch(handleError));
+    document.addEventListener("click", (event) => onFloatingActionMenuClick(event).catch(handleError));
+    window.addEventListener("resize", restoreOpenActionMenuPosition);
 }
 
 async function refreshAll() {
@@ -243,18 +252,22 @@ function renderServicesTable(services) {
             <td>${escapeHtml(formatDateTime(service.lastCheckAt))}</td>
             <td class="message-cell">${escapeHtml(service.lastMessage ?? "—")}</td>
             <td>
-                <div class="actions">
-                    <button class="mini-button" data-action="toggle-monitoring" data-id="${service.id}" data-enabled="${service.monitoringEnabled}">
-                        ${service.monitoringEnabled ? "Пауза" : "Включить"}
-                    </button>
-                    <button class="mini-button" data-action="restart" data-id="${service.id}">Restart</button>
-                    <button class="mini-button" data-action="check" data-id="${service.id}">Check</button>
-                    <button class="mini-button" data-action="edit-service" data-id="${service.id}">Edit</button>
-                    <button class="mini-button danger" data-action="delete-service" data-id="${service.id}">Delete</button>
-                </div>
+                ${renderActionMenu(`service-${service.id}`, [
+                    {
+                        action: "toggle-monitoring",
+                        id: service.id,
+                        label: service.monitoringEnabled ? "Пауза" : "Включить",
+                        attributes: `data-enabled="${service.monitoringEnabled}"`
+                    },
+                    {action: "restart", id: service.id, label: "Restart"},
+                    {action: "check", id: service.id, label: "Check"},
+                    {action: "edit-service", id: service.id, label: "Edit"},
+                    {action: "delete-service", id: service.id, label: "Delete", danger: true}
+                ])}
             </td>
         </tr>
     `).join("");
+    restoreOpenActionMenuPosition();
 }
 
 function renderHostsTable() {
@@ -265,13 +278,14 @@ function renderHostsTable() {
             <td>${escapeHtml(host.connectionMode)}</td>
             <td>${escapeHtml(host.address)}</td>
             <td>
-                <div class="actions">
-                    <button class="mini-button" data-action="edit-host" data-id="${host.id}">Edit</button>
-                    <button class="mini-button danger" data-action="delete-host" data-id="${host.id}">Delete</button>
-                </div>
+                ${renderActionMenu(`host-${host.id}`, [
+                    {action: "edit-host", id: host.id, label: "Edit"},
+                    {action: "delete-host", id: host.id, label: "Delete", danger: true}
+                ])}
             </td>
         </tr>
     `).join("");
+    restoreOpenActionMenuPosition();
 }
 
 function renderGroupsTable() {
@@ -281,13 +295,158 @@ function renderGroupsTable() {
             <td>${escapeHtml(group.name)}</td>
             <td>${escapeHtml(group.description ?? "—")}</td>
             <td>
-                <div class="actions">
-                    <button class="mini-button" data-action="edit-group" data-id="${group.id}">Edit</button>
-                    <button class="mini-button danger" data-action="delete-group" data-id="${group.id}">Delete</button>
-                </div>
+                ${renderActionMenu(`group-${group.id}`, [
+                    {action: "edit-group", id: group.id, label: "Edit"},
+                    {action: "delete-group", id: group.id, label: "Delete", danger: true}
+                ])}
             </td>
         </tr>
     `).join("");
+    restoreOpenActionMenuPosition();
+}
+
+function renderActionMenu(menuId, items) {
+    const menuOpen = state.openActionMenuId === menuId;
+
+    return `
+        <div class="action-menu-shell">
+            <button class="hamburger-button" type="button" data-menu-toggle data-menu-id="${escapeHtml(menuId)}"
+                    aria-haspopup="menu" aria-expanded="${String(menuOpen)}"
+                    aria-controls="action-menu-${escapeHtml(menuId)}" aria-label="Открыть действия">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <div id="action-menu-${escapeHtml(menuId)}" class="action-menu action-menu-template" role="menu" hidden>
+                ${items.map((item) => `
+                    <button class="action-menu-item${item.danger ? " danger" : ""}" type="button" role="menuitem"
+                            data-action="${escapeHtml(item.action)}" data-id="${escapeHtml(item.id)}" ${item.attributes ?? ""}>
+                        ${escapeHtml(item.label)}
+                    </button>
+                `).join("")}
+            </div>
+        </div>
+    `;
+}
+
+function handleActionMenuClick(event) {
+    const toggle = event.target.closest?.("[data-menu-toggle]");
+    if (!toggle) {
+        return false;
+    }
+
+    const shell = toggle.closest(".action-menu-shell");
+    const menu = shell?.querySelector(".action-menu");
+    if (!menu) {
+        return false;
+    }
+
+    const menuId = toggle.dataset.menuId;
+    const shouldOpen = state.openActionMenuId !== menuId;
+    closeActionMenus(shell);
+    state.openActionMenuId = shouldOpen ? menuId : null;
+    toggle.setAttribute("aria-expanded", String(shouldOpen));
+    if (shouldOpen) {
+        showFloatingActionMenu(menu, toggle);
+    }
+    return true;
+}
+
+function closeActionMenus(exceptShell = null) {
+    if (!exceptShell) {
+        state.openActionMenuId = null;
+    }
+
+    hideFloatingActionMenu();
+    document.querySelectorAll(".action-menu-shell").forEach((shell) => {
+        if (shell === exceptShell) {
+            return;
+        }
+
+        shell.closest(".table-wrap")?.classList.remove("has-open-action-menu");
+        const toggle = shell.querySelector("[data-menu-toggle]");
+        const menu = shell.querySelector(".action-menu");
+        if (menu) {
+            menu.hidden = true;
+            menu.style.left = "";
+            menu.style.top = "";
+        }
+        if (toggle) {
+            toggle.setAttribute("aria-expanded", "false");
+        }
+    });
+}
+
+function restoreOpenActionMenuPosition() {
+    if (!state.openActionMenuId) {
+        hideFloatingActionMenu();
+        return;
+    }
+
+    const toggle = Array.from(document.querySelectorAll("[data-menu-toggle]"))
+        .find((button) => button.dataset.menuId === state.openActionMenuId);
+    const menu = toggle?.closest(".action-menu-shell")?.querySelector(".action-menu");
+    if (menu && toggle) {
+        toggle.setAttribute("aria-expanded", "true");
+        showFloatingActionMenu(menu, toggle);
+    } else {
+        state.openActionMenuId = null;
+        hideFloatingActionMenu();
+    }
+}
+
+function showFloatingActionMenu(sourceMenu, toggle) {
+    const floatingMenu = getFloatingActionMenu();
+    floatingMenu.innerHTML = sourceMenu.innerHTML;
+    floatingMenu.hidden = false;
+    positionActionMenu(floatingMenu, toggle);
+}
+
+function hideFloatingActionMenu() {
+    const floatingMenu = document.getElementById("floatingActionMenu");
+    if (floatingMenu) {
+        floatingMenu.hidden = true;
+        floatingMenu.innerHTML = "";
+        floatingMenu.style.left = "";
+        floatingMenu.style.top = "";
+    }
+    document.querySelectorAll(".table-wrap.has-open-action-menu")
+        .forEach((element) => element.classList.remove("has-open-action-menu"));
+}
+
+function getFloatingActionMenu() {
+    let floatingMenu = document.getElementById("floatingActionMenu");
+    if (!floatingMenu) {
+        floatingMenu = document.createElement("div");
+        floatingMenu.id = "floatingActionMenu";
+        floatingMenu.className = "action-menu floating-action-menu";
+        floatingMenu.setAttribute("role", "menu");
+        floatingMenu.hidden = true;
+        document.body.appendChild(floatingMenu);
+    }
+
+    return floatingMenu;
+}
+
+function positionActionMenu(menu, toggle) {
+    const margin = 12;
+    const gap = 8;
+    toggle.closest(".table-wrap")?.classList.add("has-open-action-menu");
+    const toggleRect = toggle.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const left = Math.min(
+            viewportWidth - menuRect.width - margin,
+            Math.max(margin, toggleRect.right - menuRect.width)
+    );
+    const bottomTop = toggleRect.bottom + gap;
+    const top = bottomTop + menuRect.height <= viewportHeight - margin
+            ? bottomTop
+            : Math.max(margin, toggleRect.top - menuRect.height - gap);
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
 }
 
 async function submitServiceForm(event) {
@@ -384,15 +543,24 @@ async function submitGroupForm(event) {
 }
 
 async function onServicesTableClick(event) {
-    const button = event.target.closest("button[data-action]");
+    if (handleActionMenuClick(event)) {
+        return;
+    }
+
+    const button = event.target.closest?.("button[data-action]");
     if (!button) {
         return;
     }
 
+    await handleServiceAction(button);
+}
+
+async function handleServiceAction(button) {
     const id = Number(button.dataset.id);
     const action = button.dataset.action;
 
     if (action === "edit-service") {
+        closeActionMenus();
         editService(id);
         return;
     }
@@ -403,6 +571,7 @@ async function onServicesTableClick(event) {
             await requestJson(`/api/services/${id}/monitoring?enabled=${String(!enabled)}`, {method: "PATCH"});
             showToast(enabled ? "Мониторинг приостановлен." : "Мониторинг включен.");
             await refreshDashboard();
+            closeActionMenus();
         });
         return;
     }
@@ -412,6 +581,7 @@ async function onServicesTableClick(event) {
             await requestVoid(`/api/services/${id}/restart`, {method: "POST"});
             showToast("Команда рестарта отправлена.");
             await refreshDashboard();
+            closeActionMenus();
         });
         return;
     }
@@ -421,71 +591,115 @@ async function onServicesTableClick(event) {
             await requestVoid(`/api/services/${id}/check`, {method: "POST"});
             showToast("Проверка сервиса выполнена.");
             await refreshDashboard();
+            closeActionMenus();
         });
         return;
     }
 
     if (action === "delete-service") {
         if (!window.confirm("Удалить сервис?")) {
+            closeActionMenus();
             return;
         }
         await runWithButtonBusy(button, async () => {
             await requestVoid(`/api/services/${id}`, {method: "DELETE"});
             showToast("Сервис удален.");
             await refreshDashboard();
+            closeActionMenus();
         });
     }
 }
 
 async function onHostsTableClick(event) {
-    const button = event.target.closest("button[data-action]");
+    if (handleActionMenuClick(event)) {
+        return;
+    }
+
+    const button = event.target.closest?.("button[data-action]");
     if (!button) {
         return;
     }
 
+    await handleHostAction(button);
+}
+
+async function handleHostAction(button) {
     const id = Number(button.dataset.id);
     const action = button.dataset.action;
 
     if (action === "edit-host") {
+        closeActionMenus();
         editHost(id);
         return;
     }
 
     if (action === "delete-host") {
         if (!window.confirm("Удалить хост?")) {
+            closeActionMenus();
             return;
         }
         await runWithButtonBusy(button, async () => {
             await requestVoid(`/api/hosts/${id}`, {method: "DELETE"});
             showToast("Хост удален.");
             await refreshAll();
+            closeActionMenus();
         });
     }
 }
 
 async function onGroupsTableClick(event) {
-    const button = event.target.closest("button[data-action]");
+    if (handleActionMenuClick(event)) {
+        return;
+    }
+
+    const button = event.target.closest?.("button[data-action]");
     if (!button) {
         return;
     }
 
+    await handleGroupAction(button);
+}
+
+async function handleGroupAction(button) {
     const id = Number(button.dataset.id);
     const action = button.dataset.action;
 
     if (action === "edit-group") {
+        closeActionMenus();
         editGroup(id);
         return;
     }
 
     if (action === "delete-group") {
         if (!window.confirm("Удалить группу?")) {
+            closeActionMenus();
             return;
         }
         await runWithButtonBusy(button, async () => {
             await requestVoid(`/api/groups/${id}`, {method: "DELETE"});
             showToast("Группа удалена.");
             await refreshAll();
+            closeActionMenus();
         });
+    }
+}
+
+async function onFloatingActionMenuClick(event) {
+    const button = event.target.closest?.(".floating-action-menu button[data-action]");
+    if (!button) {
+        return;
+    }
+
+    if (state.openActionMenuId?.startsWith("service-")) {
+        await handleServiceAction(button);
+        return;
+    }
+    if (state.openActionMenuId?.startsWith("host-")) {
+        await handleHostAction(button);
+        return;
+    }
+    if (state.openActionMenuId?.startsWith("group-")) {
+        await handleGroupAction(button);
     }
 }
 

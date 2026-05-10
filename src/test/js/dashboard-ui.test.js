@@ -295,6 +295,70 @@ test("dashboard renders pid and off for services without health-check url", () =
     assert.match(tbody.innerHTML, />off</);
 });
 
+test("service host and group actions render under hamburger menus", () => {
+    const {context} = loadApp();
+    const servicesBody = context.document.getElementById("servicesTableBody");
+    const hostsBody = context.document.getElementById("hostsTableBody");
+    const groupsBody = context.document.getElementById("groupsTableBody");
+
+    context.renderServicesTable([{
+        id: 7,
+        name: "billing",
+        hostName: "local",
+        hostAddress: "127.0.0.1",
+        groupName: "core",
+        monitoringEnabled: true,
+        status: "UP",
+        processRunning: true,
+        lastKnownPid: 1234,
+        healthCheckEnabled: true,
+        healthCheckPassed: true,
+        lastCheckAt: null,
+        lastMessage: "ok"
+    }]);
+    vm.runInContext(`
+        state.hosts = [{id: 3, name: "local", connectionMode: "LOCAL", address: "127.0.0.1"}];
+        state.groups = [{id: 5, name: "core", description: "main"}];
+        renderHostsTable();
+        renderGroupsTable();
+    `, context);
+
+    assert.match(servicesBody.innerHTML, /class="hamburger-button"/);
+    assert.match(servicesBody.innerHTML, /class="[^"]*action-menu/);
+    assert.match(servicesBody.innerHTML, /data-action="restart"/);
+    assert.doesNotMatch(servicesBody.innerHTML, /class="actions"/);
+
+    assert.match(hostsBody.innerHTML, /class="hamburger-button"/);
+    assert.match(hostsBody.innerHTML, /data-action="edit-host"/);
+    assert.match(groupsBody.innerHTML, /class="hamburger-button"/);
+    assert.match(groupsBody.innerHTML, /data-action="edit-group"/);
+});
+
+test("open action menu button state survives dashboard table refresh", () => {
+    const {context} = loadApp();
+    const servicesBody = context.document.getElementById("servicesTableBody");
+
+    vm.runInContext(`state.openActionMenuId = "service-7";`, context);
+    context.renderServicesTable([{
+        id: 7,
+        name: "billing",
+        hostName: "local",
+        hostAddress: "127.0.0.1",
+        groupName: "core",
+        monitoringEnabled: true,
+        status: "UP",
+        processRunning: true,
+        lastKnownPid: 1234,
+        healthCheckEnabled: true,
+        healthCheckPassed: true,
+        lastCheckAt: null,
+        lastMessage: "ok"
+    }]);
+
+    assert.match(servicesBody.innerHTML, /data-menu-id="service-7"/);
+    assert.match(servicesBody.innerHTML, /aria-expanded="true"/);
+});
+
 test("floating tab button switches between dashboard and configuration with swipe state", () => {
     const {context} = loadApp();
     const element = (id) => context.document.getElementById(id);
