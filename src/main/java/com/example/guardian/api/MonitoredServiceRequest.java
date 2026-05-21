@@ -12,7 +12,10 @@ import jakarta.validation.constraints.NotNull;
  * @param hostId identifier of the host where the service runs
  * @param groupId optional identifier of the logical group that owns the service
  * @param processMatch pattern used by {@code pgrep -af} to locate the process
- * @param restartCommand shell command used to restart the service
+ * @param executionPath optional directory used as working path before start or manual restart commands
+ * @param startCommand shell command used to start the service
+ * @param manualRestartEnabled whether the operator provides a custom restart command
+ * @param restartCommand optional manual restart command
  * @param healthUrl optional HTTP endpoint used for additional health validation
  * @param healthTimeoutSeconds timeout for the health-check request in seconds
  * @param restartCooldownSeconds minimum delay between restart attempts
@@ -35,8 +38,17 @@ public record MonitoredServiceRequest(
         @Schema(description = "Pattern passed to pgrep -af to locate the service process.", example = "billing-api.jar", requiredMode = Schema.RequiredMode.REQUIRED)
         @NotBlank String processMatch,
 
-        @Schema(description = "Shell command executed to restart the service.", example = "systemctl restart billing-api", requiredMode = Schema.RequiredMode.REQUIRED)
-        @NotBlank String restartCommand,
+        @Schema(description = "Optional directory used as working path before start or manual restart commands.", example = "/opt/billing-api", nullable = true)
+        String executionPath,
+
+        @Schema(description = "Shell command executed to start the service.", example = "systemctl start billing-api", requiredMode = Schema.RequiredMode.REQUIRED)
+        @NotBlank String startCommand,
+
+        @Schema(description = "When true, restartCommand is executed before startCommand. When false, the monitor kills the matched process before startCommand.", example = "false")
+        boolean manualRestartEnabled,
+
+        @Schema(description = "Optional manual restart command executed before the start command when manualRestartEnabled is true.", example = "systemctl stop billing-api", nullable = true)
+        String restartCommand,
 
         @Schema(description = "Optional HTTP health endpoint checked after process lookup.", example = "http://127.0.0.1:8080/actuator/health", nullable = true)
         String healthUrl,

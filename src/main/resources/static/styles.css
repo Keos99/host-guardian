@@ -45,7 +45,7 @@ body::before {
 .app-shell {
     width: min(1440px, calc(100% - 32px));
     margin: 0 auto;
-    padding: 28px 0 48px;
+    padding: 28px 78px 48px 0;
 }
 
 .hero,
@@ -148,6 +148,85 @@ body::before {
     margin-bottom: 18px;
 }
 
+.tabs-viewport {
+    overflow: hidden;
+    position: relative;
+    transition: height 320ms ease;
+}
+
+.tabs-track {
+    display: flex;
+    align-items: flex-start;
+    transform: translate3d(0, 0, 0);
+    transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+}
+
+.tabs-track.is-configuration {
+    transform: translate3d(-100%, 0, 0);
+}
+
+.tab-page {
+    flex: 0 0 100%;
+    min-width: 0;
+}
+
+.tab-page[aria-hidden="true"] {
+    pointer-events: none;
+}
+
+.tab-page > :last-child {
+    margin-bottom: 0;
+}
+
+.tab-switch-button {
+    align-items: center;
+    background: linear-gradient(135deg, var(--accent-2), #17313b);
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    border-radius: 50%;
+    box-shadow: 0 18px 38px rgba(18, 31, 37, 0.24);
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 1.8rem;
+    font-weight: 800;
+    height: 58px;
+    justify-content: center;
+    line-height: 1;
+    position: fixed;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+    width: 58px;
+    z-index: 40;
+}
+
+.tab-switch-button:hover {
+    box-shadow: 0 22px 46px rgba(18, 31, 37, 0.3);
+    transform: translateY(-50%) translateX(-2px);
+}
+
+.tab-switch-button.is-back:hover {
+    transform: translateY(-50%) translateX(2px);
+}
+
+.tab-switch-button:focus-visible {
+    outline: 3px solid rgba(217, 93, 57, 0.45);
+    outline-offset: 4px;
+}
+
+.sr-only {
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    width: 1px;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+}
+
 .workspace-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.55fr) minmax(340px, 0.95fr);
@@ -199,6 +278,11 @@ textarea {
     min-height: 140px;
 }
 
+textarea:disabled {
+    opacity: 0.62;
+    cursor: not-allowed;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -231,21 +315,61 @@ textarea {
 }
 
 .button,
-.mini-button {
+.mini-button,
+.action-menu-item {
     border: 0;
     border-radius: 999px;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
     transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
 }
 
 .button:hover,
-.mini-button:hover {
+.mini-button:hover,
+.action-menu-item:hover {
     transform: translateY(-1px);
 }
 
 .button {
     padding: 12px 18px;
     font-weight: 700;
+}
+
+.button:disabled,
+.mini-button:disabled,
+.action-menu-item:disabled {
+    cursor: wait;
+    opacity: 0.72;
+    transform: none;
+}
+
+.button.is-loading,
+.mini-button.is-loading,
+.action-menu-item.is-loading {
+    pointer-events: none;
+}
+
+.button.is-loading::before,
+.mini-button.is-loading::before,
+.action-menu-item.is-loading::before {
+    content: "";
+    width: 0.9em;
+    height: 0.9em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    animation: button-spin 700ms linear infinite;
+}
+
+@keyframes button-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .button-primary {
@@ -269,8 +393,89 @@ textarea {
     color: var(--danger);
 }
 
+.action-menu-shell {
+    display: inline-flex;
+    justify-content: flex-end;
+    position: relative;
+}
+
+.hamburger-button {
+    align-items: center;
+    background: rgba(14, 124, 134, 0.11);
+    border: 1px solid rgba(14, 124, 134, 0.18);
+    border-radius: 50%;
+    color: var(--ink);
+    cursor: pointer;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    height: 38px;
+    justify-content: center;
+    padding: 0;
+    transition: transform 140ms ease, background 140ms ease, color 140ms ease;
+    width: 38px;
+}
+
+.hamburger-button span {
+    background: currentColor;
+    border-radius: 999px;
+    display: block;
+    height: 2px;
+    width: 16px;
+}
+
+.hamburger-button:hover,
+.hamburger-button[aria-expanded="true"] {
+    background: var(--accent-2);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.action-menu {
+    background: var(--panel-strong);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 18px 36px rgba(18, 31, 37, 0.18);
+    display: grid;
+    gap: 4px;
+    max-width: calc(100vw - 24px);
+    min-width: 172px;
+    padding: 8px;
+    position: fixed;
+    z-index: 1000;
+}
+
+.action-menu[hidden] {
+    display: none !important;
+}
+
+.action-menu-item {
+    background: transparent;
+    color: var(--ink);
+    justify-content: flex-start;
+    padding: 10px 12px;
+    text-align: left;
+    width: 100%;
+}
+
+.action-menu-item:hover {
+    background: rgba(14, 124, 134, 0.1);
+}
+
+.action-menu-item.danger {
+    color: var(--danger);
+}
+
+.action-menu-item.danger:hover {
+    background: rgba(180, 35, 24, 0.1);
+}
+
 .table-wrap {
     overflow-x: auto;
+}
+
+.table-wrap.has-open-action-menu {
+    overflow: visible;
 }
 
 .data-table {
@@ -336,6 +541,11 @@ textarea {
     color: #5d5750;
 }
 
+.health-off {
+    background: rgba(65, 76, 82, 0.1);
+    color: #5f7077;
+}
+
 .status-restarting {
     background: rgba(242, 140, 40, 0.16);
     color: #a45a14;
@@ -393,7 +603,7 @@ textarea {
 @media (max-width: 760px) {
     .app-shell {
         width: min(100% - 20px, 100%);
-        padding-top: 18px;
+        padding: 18px 62px 36px 0;
     }
 
     .hero,
@@ -408,5 +618,26 @@ textarea {
     .panel-header {
         align-items: start;
         flex-direction: column;
+    }
+
+    .tab-switch-button {
+        height: 52px;
+        right: 10px;
+        width: 52px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .button,
+    .mini-button,
+    .action-menu-item,
+    .hamburger-button,
+    .tabs-viewport,
+    .tabs-track,
+    .tab-switch-button,
+    .button.is-loading::before,
+    .mini-button.is-loading::before {
+        animation: none;
+        transition: none;
     }
 }

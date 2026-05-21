@@ -7,7 +7,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
@@ -38,9 +37,19 @@ public class MonitoredService {
     @Column(nullable = false)
     private String processMatch;
 
-    @Lob
+    @Column(length = 1024)
+    private String executionPath;
+
+    @Column(nullable = false, length = 4096)
+    private String restartCommand = "";
+
+    @Column(nullable = false, length = 4096)
+    private String startCommand;
+
     @Column(nullable = false)
-    private String restartCommand;
+    private boolean manualRestartEnabled;
+
+    private Long lastKnownPid;
 
     private String healthUrl;
 
@@ -152,6 +161,14 @@ public class MonitoredService {
         this.processMatch = processMatch;
     }
 
+    public String getExecutionPath() {
+        return executionPath;
+    }
+
+    public void setExecutionPath(String executionPath) {
+        this.executionPath = executionPath;
+    }
+
     /**
      * Returns the shell command used to restart the service.
      *
@@ -168,6 +185,30 @@ public class MonitoredService {
      */
     public void setRestartCommand(String restartCommand) {
         this.restartCommand = restartCommand;
+    }
+
+    public String getStartCommand() {
+        return startCommand;
+    }
+
+    public void setStartCommand(String startCommand) {
+        this.startCommand = startCommand;
+    }
+
+    public boolean isManualRestartEnabled() {
+        return manualRestartEnabled;
+    }
+
+    public void setManualRestartEnabled(boolean manualRestartEnabled) {
+        this.manualRestartEnabled = manualRestartEnabled;
+    }
+
+    public Long getLastKnownPid() {
+        return lastKnownPid;
+    }
+
+    public void setLastKnownPid(Long lastKnownPid) {
+        this.lastKnownPid = lastKnownPid;
     }
 
     /**

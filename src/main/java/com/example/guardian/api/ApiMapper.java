@@ -66,7 +66,11 @@ public class ApiMapper {
                 service.getGroup() != null ? service.getGroup().getId() : null,
                 service.getGroup() != null ? service.getGroup().getName() : null,
                 service.getProcessMatch(),
+                service.getExecutionPath(),
                 service.getRestartCommand(),
+                service.getStartCommand(),
+                service.isManualRestartEnabled(),
+                service.getLastKnownPid(),
                 service.getHealthUrl(),
                 service.getHealthTimeoutSeconds(),
                 service.getRestartCooldownSeconds(),
@@ -105,10 +109,16 @@ public class ApiMapper {
                 service.isMonitoringEnabled(),
                 status,
                 snapshot != null && snapshot.processRunning(),
+                snapshot != null ? snapshot.lastKnownPid() : service.getLastKnownPid(),
+                snapshot != null ? snapshot.healthCheckEnabled() : hasHealthCheck(service),
                 snapshot != null && snapshot.healthCheckPassed(),
                 snapshot != null ? snapshot.lastMessage() : "Service has not been checked yet",
                 snapshot != null ? snapshot.lastCheckAt() : null,
                 snapshot != null ? snapshot.lastRestartAt() : null
         );
+    }
+
+    private boolean hasHealthCheck(MonitoredService service) {
+        return service.getHealthUrl() != null && !service.getHealthUrl().isBlank();
     }
 }

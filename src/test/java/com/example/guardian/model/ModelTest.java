@@ -1,7 +1,12 @@
 package com.example.guardian.model;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Lob;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,7 +64,11 @@ class ModelTest {
         service.setHost(host);
         service.setGroup(group);
         service.setProcessMatch("api.jar");
+        service.setExecutionPath("/opt/api");
         service.setRestartCommand("restart");
+        service.setStartCommand("start");
+        service.setManualRestartEnabled(true);
+        service.setLastKnownPid(1234L);
         service.setHealthUrl("http://localhost/health");
         service.setHealthTimeoutSeconds(4);
         service.setRestartCooldownSeconds(70);
@@ -73,7 +82,11 @@ class ModelTest {
         assertThat(service.getHost()).isSameAs(host);
         assertThat(service.getGroup()).isSameAs(group);
         assertThat(service.getProcessMatch()).isEqualTo("api.jar");
+        assertThat(service.getExecutionPath()).isEqualTo("/opt/api");
         assertThat(service.getRestartCommand()).isEqualTo("restart");
+        assertThat(service.getStartCommand()).isEqualTo("start");
+        assertThat(service.isManualRestartEnabled()).isTrue();
+        assertThat(service.getLastKnownPid()).isEqualTo(1234L);
         assertThat(service.getHealthUrl()).isEqualTo("http://localhost/health");
         assertThat(service.getHealthTimeoutSeconds()).isEqualTo(4);
         assertThat(service.getRestartCooldownSeconds()).isEqualTo(70);
@@ -84,6 +97,37 @@ class ModelTest {
         assertThat(service.getHealthTimeout()).hasSeconds(4);
         assertThat(service.getRestartCooldown()).hasSeconds(70);
         assertThat(service.getRestartWindow()).hasSeconds(700);
+    }
+
+    @Test
+    void monitoredServiceCommandColumnsUseVarcharMapping() throws Exception {
+        assertThat(commandColumn("restartCommand").length()).isEqualTo(4096);
+        assertThat(commandColumn("startCommand").length()).isEqualTo(4096);
+        assertThat(MonitoredService.class.getDeclaredField("restartCommand").isAnnotationPresent(Lob.class)).isFalse();
+        assertThat(MonitoredService.class.getDeclaredField("startCommand").isAnnotationPresent(Lob.class)).isFalse();
+    }
+
+    @Test
+    void flywayMigrationsDoNotUseClobForCommandColumns() throws Exception {
+        Path migrationDir = Path.of("src/main/resources/db/migration");
+
+        try (var migrations = Files.list(migrationDir)) {
+            String sql = migrations
+                    .filter(path -> path.getFileName().toString().endsWith(".sql"))
+                    .map(path -> {
+                        try {
+                            return Files.readString(path);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    })
+                    .reduce("", (left, right) -> left + "\n" + right)
+                    .toLowerCase();
+
+            assertThat(sql).doesNotContain("clob");
+            assertThat(sql).contains("restart_command varchar(4096) not null");
+            assertThat(sql).contains("start_command varchar(4096)");
+        }
     }
 
     @Test
@@ -111,5 +155,10 @@ class ModelTest {
         assertThat(state.isHealthCheckPassed()).isTrue();
         assertThat(state.getLastMessage()).isEqualTo("ok");
         assertThat(state.getRestartHistory()).containsExactly(restart);
+    }
+
+    private Column commandColumn(String fieldName) throws NoSuchFieldException {
+        Field field = MonitoredService.class.getDeclaredField(fieldName);
+        return field.getAnnotation(Column.class);
     }
 }

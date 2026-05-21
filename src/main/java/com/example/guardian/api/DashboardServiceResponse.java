@@ -20,6 +20,8 @@ import java.time.Instant;
  * @param monitoringEnabled flag showing whether automatic monitoring is active
  * @param status last calculated service health status
  * @param processRunning whether the service process was found during the last check
+ * @param lastKnownPid latest persisted or runtime PID
+ * @param healthCheckEnabled whether the service has HTTP health-check URL configured
  * @param healthCheckPassed whether the last HTTP health-check succeeded
  * @param lastMessage human-readable explanation of the current state
  * @param lastCheckAt timestamp of the latest monitoring pass
@@ -59,6 +61,12 @@ public record DashboardServiceResponse(
 
         @Schema(description = "Whether the process was found during the latest check.", example = "true")
         boolean processRunning,
+
+        @Schema(description = "Latest PID found by the monitor.", example = "1234", nullable = true)
+        Long lastKnownPid,
+
+        @Schema(description = "Whether HTTP health-check is configured for this service.", example = "true")
+        boolean healthCheckEnabled,
 
         @Schema(description = "Whether the latest HTTP health-check passed.", example = "true")
         boolean healthCheckPassed,

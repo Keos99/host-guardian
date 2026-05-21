@@ -1,6 +1,7 @@
 package com.example.guardian.service;
 
 import com.example.guardian.model.HostConfig;
+import com.example.guardian.config.MonitorProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,7 @@ public class HttpHealthChecker {
 
     private final RestTemplateBuilder restTemplateBuilder;
     private final HostShellExecutor hostShellExecutor;
+    private final MonitorProperties monitorProperties;
 
     /**
      * Создает компонент health-check на основе {@link RestTemplateBuilder}.
@@ -31,9 +33,11 @@ public class HttpHealthChecker {
      * @param hostShellExecutor исполнитель shell-команд на локальном или удаленном хосте
      */
     public HttpHealthChecker(RestTemplateBuilder restTemplateBuilder,
-                             HostShellExecutor hostShellExecutor) {
+                             HostShellExecutor hostShellExecutor,
+                             MonitorProperties monitorProperties) {
         this.restTemplateBuilder = restTemplateBuilder;
         this.hostShellExecutor = hostShellExecutor;
+        this.monitorProperties = monitorProperties;
     }
 
     /**
@@ -53,7 +57,11 @@ public class HttpHealthChecker {
         if (!host.isLocal()) {
             String command = "curl -fsS --max-time " + Math.max(1, timeout.toSeconds())
                     + " " + shellQuote(url) + " > /dev/null";
-            CommandExecutor.CommandResult result = hostShellExecutor.execute(host, command, timeout.plusSeconds(1));
+            CommandExecutor.CommandResult result = hostShellExecutor.execute(
+                    host,
+                    command,
+                    timeout.plus(monitorProperties.getCommand().getHealthCommandExtraTimeout())
+            );
             return result.success();
         }
 

@@ -20,6 +20,18 @@ spring:
 
 monitor:
   interval: 30s
+  ssh:
+    provider: system
+    strict-host-key-checking: false
+  command:
+    process-lookup-timeout: 5s
+    pid-check-timeout: 3s
+    stop-timeout: 10s
+    stop-command-extra-timeout: 2s
+    restart-timeout: 20s
+    start-timeout: 20s
+    health-command-extra-timeout: 1s
+    ssh-connect-timeout: 5s
 
 springdoc:
   api-docs:
