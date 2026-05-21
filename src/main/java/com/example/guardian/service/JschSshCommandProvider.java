@@ -1,0 +1,162 @@
+package com.example.guardian.service;
+
+import com.example.guardian.config.MonitorProperties;
+import com.example.guardian.model.HostConfig;
+import com.jcraft.jsch.ChannelExec;
+import com.jcraft.jsch.Session;
+import org.springframework.stereotype.Component;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+
+/**
+ * SSH provider backed by the JSch Java library.
+ *
+ * <p>This provider avoids invoking the external {@code ssh} binary. Commands are
+ * still executed on the remote host through {@code bash -lc} so process checks,
+ * health checks, restart commands, and working-directory wrapping keep the same
+ * shell semantics as the system SSH provider.
+ */
+@Component
+public class JschSshCommandProvider implements SshCommandProvider {
+
+    private final JschFacade jschFacade;
+    private final MonitorProperties monitorProperties;
+
+    /**
+     * Creates a JSch-backed SSH command provider.
+     *
+     * @param jschFacade adapter responsible for opening SSH sessions
+     * @param monitorProperties global monitoring and SSH settings
+     */
+    public JschSshCommandProvider(JschFacade jschFacade,
+                                  MonitorProperties monitorProperties) {
+        this.jschFacade = jschFacade;
+        this.monitorProperties = monitorProperties;
+    }
+
+    @Override
+    public MonitorProperties.Ssh.Provider provider() {
+        return MonitorProperties.Ssh.Provider.JSCH;
+    }
+
+    /**
+     * Executes a remote command through a JSch {@code exec} channel.
+     *
+     * @param host remote host configuration
+     * @param shellCommand command body to run inside {@code bash -lc}
+     * @param timeout maximum command execution time
+     * @return exit code, stdout, and stderr captured from the SSH channel
+     */
+    @Override
+    public CommandExecutor.CommandResult execute(HostConfig host, String shellCommand, Duration timeout) {
+        Session session = null;
+        ChannelExec channel = null;
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+
+        try {
+            session = jschFacade.openSession(
+                    host,
+                    monitorProperties.getSsh(),
+                    monitorProperties.getCommand().getSshConnectTimeout()
+            );
+            channel = (ChannelExec) session.openChannel("exec");
+            channel.setCommand("bash -lc " + shellQuote(shellCommand));
+            InputStream outputStream = channel.getInputStream();
+            channel.setErrStream(stderr);
+            channel.connect(JschFacade.toTimeoutMillis(monitorProperties.getCommand().getSshConnectTimeout()));
+
+            CommandExecutor.CommandResult timeoutResult = waitForCompletion(channel, outputStream, stdout, stderr, timeout);
+            if (timeoutResult != null) {
+                return timeoutResult;
+            }
+
+            drainAvailable(outputStream, stdout);
+            return new CommandExecutor.CommandResult(
+                    channel.getExitStatus(),
+                    stdout.toString(StandardCharsets.UTF_8),
+                    stderr.size() > 0 ? stderr.toString(StandardCharsets.UTF_8) : null
+            );
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new CommandExecutor.CommandResult(-1, stdout.toString(StandardCharsets.UTF_8), e.getMessage());
+        } catch (Exception e) {
+            return new CommandExecutor.CommandResult(-1, stdout.toString(StandardCharsets.UTF_8), e.getMessage());
+        } finally {
+            if (channel != null) {
+                channel.disconnect();
+            }
+            if (session != null) {
+                session.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Waits until the channel closes or the command timeout expires.
+     *
+     * @param channel active JSch exec channel
+     * @param outputStream channel stdout stream
+     * @param stdout accumulated stdout buffer
+     * @param stderr accumulated stderr buffer
+     * @param timeout maximum command execution time
+     * @return timeout result when the deadline is reached; otherwise {@code null}
+     * @throws IOException when stdout cannot be read
+     * @throws InterruptedException when the wait loop is interrupted
+     */
+    private CommandExecutor.CommandResult waitForCompletion(ChannelExec channel,
+                                                            InputStream outputStream,
+                                                            ByteArrayOutputStream stdout,
+                                                            ByteArrayOutputStream stderr,
+                                                            Duration timeout)
+            throws IOException, InterruptedException {
+        Instant deadline = Instant.now().plus(timeout);
+        while (!channel.isClosed()) {
+            drainAvailable(outputStream, stdout);
+            if (!Instant.now().isBefore(deadline)) {
+                channel.disconnect();
+                return new CommandExecutor.CommandResult(
+                        -1,
+                        stdout.toString(StandardCharsets.UTF_8),
+                        "Command timed out after " + timeout
+                                + (stderr.size() > 0 ? ": " + stderr.toString(StandardCharsets.UTF_8) : "")
+                );
+            }
+            Thread.sleep(Math.min(50, Math.max(1, Duration.between(Instant.now(), deadline).toMillis())));
+        }
+        return null;
+    }
+
+    /**
+     * Copies currently available bytes from a channel stream into a buffer.
+     *
+     * @param inputStream stream to drain
+     * @param outputStream destination buffer
+     * @throws IOException when the source stream cannot be read
+     */
+    private void drainAvailable(InputStream inputStream, ByteArrayOutputStream outputStream) throws IOException {
+        byte[] buffer = new byte[4096];
+        while (inputStream.available() > 0) {
+            int read = inputStream.read(buffer);
+            if (read < 0) {
+                return;
+            }
+            outputStream.write(buffer, 0, read);
+        }
+    }
+
+    /**
+     * Quotes a value so it can be passed as one shell argument.
+     *
+     * @param value raw shell argument
+     * @return safely single-quoted shell argument
+     */
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+}

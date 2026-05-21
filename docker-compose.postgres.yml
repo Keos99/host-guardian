@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: host-guardian-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: host_guardian
+      POSTGRES_USER: host_guardian
+      POSTGRES_PASSWORD: host_guardian
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

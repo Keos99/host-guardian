@@ -1,5 +1,7 @@
 package com.example.guardian.service;
 
+import com.example.guardian.model.HostConfig;
+import com.example.guardian.config.MonitorProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -20,25 +22,49 @@ import java.time.Duration;
 public class HttpHealthChecker {
 
     private final RestTemplateBuilder restTemplateBuilder;
+    private final HostShellExecutor hostShellExecutor;
+    private final MonitorProperties monitorProperties;
 
     /**
      * Создает компонент health-check на основе {@link RestTemplateBuilder}.
      *
      * @param restTemplateBuilder фабрика для построения {@link RestTemplate}
      *                            с нужными сетевыми таймаутами
+     * @param hostShellExecutor исполнитель shell-команд на локальном или удаленном хосте
      */
-    public HttpHealthChecker(RestTemplateBuilder restTemplateBuilder) {
+    public HttpHealthChecker(RestTemplateBuilder restTemplateBuilder,
+                             HostShellExecutor hostShellExecutor,
+                             MonitorProperties monitorProperties) {
         this.restTemplateBuilder = restTemplateBuilder;
+        this.hostShellExecutor = hostShellExecutor;
+        this.monitorProperties = monitorProperties;
     }
 
     /**
      * Выполняет HTTP GET запрос к health endpoint и определяет, считается ли сервис здоровым.
      *
+     * <p>Для локального хоста используется обычный HTTP-клиент JVM. Для удаленных
+     * хостов health-check выполняется на самом целевом хосте через {@code curl},
+     * чтобы можно было проверять endpoints, доступные только локально на удаленной
+     * машине, например {@code http://127.0.0.1:8081/actuator/health}.
+     *
+     * @param host хост, на котором расположен сервис
      * @param url адрес health endpoint
      * @param timeout единый таймаут на установление соединения и чтение ответа
      * @return {@code true}, если endpoint ответил кодом {@code 2xx}; иначе {@code false}
      */
-    public boolean isHealthy(String url, Duration timeout) {
+    public boolean isHealthy(HostConfig host, String url, Duration timeout) {
+        if (!host.isLocal()) {
+            String command = "curl -fsS --max-time " + Math.max(1, timeout.toSeconds())
+                    + " " + shellQuote(url) + " > /dev/null";
+            CommandExecutor.CommandResult result = hostShellExecutor.execute(
+                    host,
+                    command,
+                    timeout.plus(monitorProperties.getCommand().getHealthCommandExtraTimeout())
+            );
+            return result.success();
+        }
+
         try {
             RestTemplate restTemplate = restTemplateBuilder
                     .setConnectTimeout(timeout)
@@ -50,5 +76,15 @@ public class HttpHealthChecker {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Quotes a value so it can be passed as a single shell argument to {@code curl}.
+     *
+     * @param value raw shell argument value
+     * @return safely single-quoted shell argument
+     */
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 }

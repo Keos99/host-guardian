@@ -1,23 +1,17 @@
 package com.example.guardian.config;
 
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Корневой бин конфигурации мониторинга, заполняемый из секции {@code monitor}
  * в {@code application.yml}.
  *
- * <p>Класс хранит глобальные параметры мониторинга, например интервал выполнения
- * проверок, а также список описаний сервисов, за которыми нужно следить.
- * Используется как единый источник настроек для планировщика и бизнес-логики
+ * <p>После переноса конфигурации сервисов в базу данных этот класс хранит только
+ * глобальные параметры приложения, например интервал между циклами фонового
  * мониторинга.
  *
  * <p>Для конфигурации включена валидация, поэтому некорректные или неполные
@@ -30,10 +24,8 @@ import java.util.List;
 public class MonitorProperties {
 
     private Duration interval = Duration.ofSeconds(30);
-
-    @Valid
-    @NotEmpty
-    private List<MonitoredService> services = new ArrayList<>();
+    private Command command = new Command();
+    private Ssh ssh = new Ssh();
 
     /**
      * Возвращает интервал между последовательными циклами мониторинга.
@@ -53,196 +45,165 @@ public class MonitorProperties {
         this.interval = interval;
     }
 
-    /**
-     * Возвращает список сервисов, описанных в конфигурации.
-     *
-     * @return список сервисов для мониторинга
-     */
-    public List<MonitoredService> getServices() {
-        return services;
+    public Command getCommand() {
+        return command;
+    }
+
+    public void setCommand(Command command) {
+        this.command = command;
     }
 
     /**
-     * Заменяет полный список сервисов, загруженных из конфигурации.
+     * Returns global SSH provider settings.
      *
-     * @param services новый список сервисов
+     * @return SSH provider configuration
      */
-    public void setServices(List<MonitoredService> services) {
-        this.services = services;
+    public Ssh getSsh() {
+        return ssh;
     }
 
     /**
-     * Описание одного отслеживаемого сервиса.
+     * Sets global SSH provider settings.
      *
-     * <p>Экземпляр этого класса задает все данные, необходимые для контроля
-     * конкретного приложения: как его найти в списке процессов, как проверить
-     * здоровье по HTTP, и как безопасно запускать повторный старт при сбое.
-     * Объекты создаются автоматически из YAML-конфигурации.
+     * @param ssh SSH provider configuration
      */
-    public static class MonitoredService {
-        @NotBlank
-        private String name;
+    public void setSsh(Ssh ssh) {
+        this.ssh = ssh;
+    }
 
-        @NotBlank
-        private String processMatch;
+    public static class Command {
 
-        @NotBlank
-        private String restartCommand;
+        private Duration processLookupTimeout = Duration.ofSeconds(5);
+        private Duration pidCheckTimeout = Duration.ofSeconds(3);
+        private Duration stopTimeout = Duration.ofSeconds(10);
+        private Duration stopCommandExtraTimeout = Duration.ofSeconds(2);
+        private Duration restartTimeout = Duration.ofSeconds(20);
+        private Duration startTimeout = Duration.ofSeconds(20);
+        private Duration healthCommandExtraTimeout = Duration.ofSeconds(1);
+        private Duration sshConnectTimeout = Duration.ofSeconds(5);
 
-        private String healthUrl;
+        public Duration getProcessLookupTimeout() {
+            return processLookupTimeout;
+        }
 
-        private Duration healthTimeout = Duration.ofSeconds(3);
+        public void setProcessLookupTimeout(Duration processLookupTimeout) {
+            this.processLookupTimeout = processLookupTimeout;
+        }
 
-        private Duration restartCooldown = Duration.ofMinutes(1);
+        public Duration getPidCheckTimeout() {
+            return pidCheckTimeout;
+        }
 
-        private int maxRestartsInWindow = 3;
+        public void setPidCheckTimeout(Duration pidCheckTimeout) {
+            this.pidCheckTimeout = pidCheckTimeout;
+        }
 
-        private Duration restartWindow = Duration.ofMinutes(10);
+        public Duration getStopTimeout() {
+            return stopTimeout;
+        }
+
+        public void setStopTimeout(Duration stopTimeout) {
+            this.stopTimeout = stopTimeout;
+        }
+
+        public Duration getStopCommandExtraTimeout() {
+            return stopCommandExtraTimeout;
+        }
+
+        public void setStopCommandExtraTimeout(Duration stopCommandExtraTimeout) {
+            this.stopCommandExtraTimeout = stopCommandExtraTimeout;
+        }
+
+        public Duration getRestartTimeout() {
+            return restartTimeout;
+        }
+
+        public void setRestartTimeout(Duration restartTimeout) {
+            this.restartTimeout = restartTimeout;
+        }
+
+        public Duration getStartTimeout() {
+            return startTimeout;
+        }
+
+        public void setStartTimeout(Duration startTimeout) {
+            this.startTimeout = startTimeout;
+        }
+
+        public Duration getHealthCommandExtraTimeout() {
+            return healthCommandExtraTimeout;
+        }
+
+        public void setHealthCommandExtraTimeout(Duration healthCommandExtraTimeout) {
+            this.healthCommandExtraTimeout = healthCommandExtraTimeout;
+        }
+
+        public Duration getSshConnectTimeout() {
+            return sshConnectTimeout;
+        }
+
+        public void setSshConnectTimeout(Duration sshConnectTimeout) {
+            this.sshConnectTimeout = sshConnectTimeout;
+        }
+    }
+
+    /**
+     * SSH provider settings shared by all remote hosts.
+     */
+    public static class Ssh {
+
+        private Provider provider = Provider.SYSTEM;
+        private boolean strictHostKeyChecking;
 
         /**
-         * Возвращает логическое имя сервиса.
+         * Returns the SSH implementation used for remote command execution.
          *
-         * <p>Это имя используется в логах и как ключ состояния в памяти.
-         *
-         * @return имя сервиса
+         * @return selected SSH provider
          */
-        public String getName() {
-            return name;
+        public Provider getProvider() {
+            return provider;
         }
 
         /**
-         * Устанавливает логическое имя сервиса.
+         * Sets the SSH implementation used for remote command execution.
          *
-         * @param name имя сервиса
+         * @param provider selected SSH provider
          */
-        public void setName(String name) {
-            this.name = name;
+        public void setProvider(Provider provider) {
+            this.provider = provider;
         }
 
         /**
-         * Возвращает шаблон поиска процесса в командной строке.
+         * Checks whether SSH host key verification is strict.
          *
-         * @return строка, по которой сервис ищется через {@code pgrep -af}
+         * @return {@code true} to require known host keys in JSch sessions
          */
-        public String getProcessMatch() {
-            return processMatch;
+        public boolean isStrictHostKeyChecking() {
+            return strictHostKeyChecking;
         }
 
         /**
-         * Устанавливает шаблон поиска процесса.
+         * Sets whether SSH host key verification is strict.
          *
-         * @param processMatch строка или подстрока для поиска процесса
+         * @param strictHostKeyChecking {@code true} to require known host keys in JSch sessions
          */
-        public void setProcessMatch(String processMatch) {
-            this.processMatch = processMatch;
+        public void setStrictHostKeyChecking(boolean strictHostKeyChecking) {
+            this.strictHostKeyChecking = strictHostKeyChecking;
         }
 
         /**
-         * Возвращает shell-команду, выполняемую для старта или рестарта сервиса.
-         *
-         * @return команда рестарта
+         * Supported SSH transport implementations.
          */
-        public String getRestartCommand() {
-            return restartCommand;
-        }
+        public enum Provider {
+            /**
+             * Execute remote commands through the operating system {@code ssh} client.
+             */
+            SYSTEM,
 
-        /**
-         * Устанавливает shell-команду рестарта.
-         *
-         * @param restartCommand команда, которая должна поднять сервис
-         */
-        public void setRestartCommand(String restartCommand) {
-            this.restartCommand = restartCommand;
-        }
-
-        /**
-         * Возвращает URL health-check endpoint, если он настроен.
-         *
-         * @return URL HTTP-проверки или {@code null}, если проверка не нужна
-         */
-        public String getHealthUrl() {
-            return healthUrl;
-        }
-
-        /**
-         * Устанавливает URL health endpoint.
-         *
-         * @param healthUrl адрес HTTP-проверки
-         */
-        public void setHealthUrl(String healthUrl) {
-            this.healthUrl = healthUrl;
-        }
-
-        /**
-         * Возвращает таймаут HTTP health-check.
-         *
-         * @return максимальная длительность ожидания ответа
-         */
-        public Duration getHealthTimeout() {
-            return healthTimeout;
-        }
-
-        /**
-         * Устанавливает таймаут HTTP health-check.
-         *
-         * @param healthTimeout длительность ожидания ответа
-         */
-        public void setHealthTimeout(Duration healthTimeout) {
-            this.healthTimeout = healthTimeout;
-        }
-
-        /**
-         * Возвращает минимальную паузу между двумя рестартами одного сервиса.
-         *
-         * @return значение cooldown
-         */
-        public Duration getRestartCooldown() {
-            return restartCooldown;
-        }
-
-        /**
-         * Устанавливает минимальную паузу между рестартами.
-         *
-         * @param restartCooldown значение cooldown
-         */
-        public void setRestartCooldown(Duration restartCooldown) {
-            this.restartCooldown = restartCooldown;
-        }
-
-        /**
-         * Возвращает максимально допустимое число рестартов в одном окне.
-         *
-         * @return лимит рестартов
-         */
-        public int getMaxRestartsInWindow() {
-            return maxRestartsInWindow;
-        }
-
-        /**
-         * Устанавливает максимально допустимое число рестартов в окне.
-         *
-         * @param maxRestartsInWindow лимит рестартов
-         */
-        public void setMaxRestartsInWindow(int maxRestartsInWindow) {
-            this.maxRestartsInWindow = maxRestartsInWindow;
-        }
-
-        /**
-         * Возвращает размер временного окна для ограничения частоты рестартов.
-         *
-         * @return длительность окна
-         */
-        public Duration getRestartWindow() {
-            return restartWindow;
-        }
-
-        /**
-         * Устанавливает размер временного окна, внутри которого считается число рестартов.
-         *
-         * @param restartWindow длительность окна
-         */
-        public void setRestartWindow(Duration restartWindow) {
-            this.restartWindow = restartWindow;
+            /**
+             * Execute remote commands through the JSch Java library.
+             */
+            JSCH
         }
     }
 }
