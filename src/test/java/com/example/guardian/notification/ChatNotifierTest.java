@@ -56,7 +56,7 @@ class ChatNotifierTest {
 
         verify(chatProvider).send(messageCaptor.capture());
         ChatMessage message = messageCaptor.getValue();
-        assertThat(message.status()).isEqualTo(MessageStatus.ALARM);
+        assertThat(message.status()).isEqualTo(MessageStatus.FAIL);
         assertThat(message.text())
                 .contains("billing-api")
                 .contains("Remote host")
@@ -76,7 +76,7 @@ class ChatNotifierTest {
     }
 
     @Test
-    void serviceAddedAndRemovedSendInfoMessages() {
+    void serviceAddedAndRemovedSendLifecycleMessages() {
         when(settings.isGlobalEnabled()).thenReturn(true);
         MonitoredService service = TestFixtures.service(1, TestFixtures.sshHost(1), null);
 
@@ -85,9 +85,9 @@ class ChatNotifierTest {
 
         verify(chatProvider, times(2)).send(messageCaptor.capture());
         List<ChatMessage> messages = messageCaptor.getAllValues();
-        assertThat(messages.get(0).status()).isEqualTo(MessageStatus.INFO);
+        assertThat(messages.get(0).status()).isEqualTo(MessageStatus.SUCCESS);
         assertThat(messages.get(0).text()).contains("Добавлен новый сервис").contains("billing-api");
-        assertThat(messages.get(1).status()).isEqualTo(MessageStatus.INFO);
+        assertThat(messages.get(1).status()).isEqualTo(MessageStatus.NOT_BUILT);
         assertThat(messages.get(1).text()).contains("удален из мониторинга").contains("billing-api");
     }
 
@@ -99,7 +99,7 @@ class ChatNotifierTest {
         notifier.restartAttempt(service, 2);
 
         verify(chatProvider).send(messageCaptor.capture());
-        assertThat(messageCaptor.getValue().status()).isEqualTo(MessageStatus.WARNING);
+        assertThat(messageCaptor.getValue().status()).isEqualTo(MessageStatus.UNSTABLE);
         assertThat(messageCaptor.getValue().text())
                 .contains("Попытка запуска")
                 .contains("2 из 3")
@@ -119,7 +119,7 @@ class ChatNotifierTest {
     }
 
     @Test
-    void restartFailedAndLimitAndMonitoringErrorSendAlarms() {
+    void restartFailedAndLimitAndMonitoringErrorSendFailures() {
         when(settings.isGlobalEnabled()).thenReturn(true);
         MonitoredService service = TestFixtures.service(1, TestFixtures.sshHost(1), null);
 
@@ -130,7 +130,7 @@ class ChatNotifierTest {
         verify(chatProvider, times(3)).send(messageCaptor.capture());
         List<ChatMessage> messages = messageCaptor.getAllValues();
         assertThat(messages).allSatisfy(message ->
-                assertThat(message.status()).isEqualTo(MessageStatus.ALARM));
+                assertThat(message.status()).isEqualTo(MessageStatus.FAILURE));
         assertThat(messages.get(0).text()).contains("команду запуска").contains("exit code 1");
         assertThat(messages.get(1).text())
                 .contains("исчерпан лимит 3 рестартов")
@@ -146,7 +146,7 @@ class ChatNotifierTest {
         notifier.watcherStarted(null);
 
         verify(chatProvider).send(messageCaptor.capture());
-        assertThat(messageCaptor.getValue().status()).isEqualTo(MessageStatus.INFO);
+        assertThat(messageCaptor.getValue().status()).isEqualTo(MessageStatus.SUCCESS);
         assertThat(messageCaptor.getValue().text()).contains("Host Guardian запущен").contains("7");
     }
 

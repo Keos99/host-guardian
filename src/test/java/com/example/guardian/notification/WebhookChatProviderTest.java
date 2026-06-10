@@ -39,7 +39,7 @@ class WebhookChatProviderTest {
     void blankUrlSwitchesToLogOnlyModeWithoutHttpCalls() {
         properties.setUrl(" ");
 
-        assertThatCode(() -> provider.send(new ChatMessage(MessageStatus.INFO, "hello")))
+        assertThatCode(() -> provider.send(new ChatMessage(MessageStatus.SUCCESS, "hello")))
                 .doesNotThrowAnyException();
 
         server.verify();
@@ -56,12 +56,25 @@ class WebhookChatProviderTest {
                 .andExpect(header("Authorization", "secret-token"))
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.peer").value("ops-channel-7"))
-                .andExpect(jsonPath("$.status").value("ALARM"))
-                .andExpect(jsonPath("$.message").value(MessageStatus.ALARM.getMarker() + " Сервис недоступен"))
+                .andExpect(jsonPath("$.status").value("FAIL"))
+                .andExpect(jsonPath("$.message").value("Сервис недоступен"))
                 .andExpect(jsonPath("$.url").value(""))
                 .andRespond(withSuccess());
 
-        provider.send(new ChatMessage(MessageStatus.ALARM, "Сервис недоступен"));
+        provider.send(new ChatMessage(MessageStatus.FAIL, "Сервис недоступен"));
+
+        server.verify();
+    }
+
+    @Test
+    void mapsProviderStatusCodesFromGetValue() {
+        properties.setUrl(WEBHOOK_URL);
+
+        server.expect(requestTo(WEBHOOK_URL))
+                .andExpect(jsonPath("$.status").value("UNSTABLE"))
+                .andRespond(withSuccess());
+
+        provider.send(new ChatMessage(MessageStatus.UNSTABLE, "restarting"));
 
         server.verify();
     }

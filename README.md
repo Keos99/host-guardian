@@ -361,14 +361,14 @@ Host Guardian can push monitoring events to an external chat through an HTTP web
 
 | Event | Status | When it is sent |
 |---|---|---|
-| Watcher started | `INFO` | on application startup, with the monitored service count |
-| Service added | `INFO` | when a service is created via API or dashboard |
-| Service removed | `INFO` | when a service is deleted |
-| Service down | `ALARM` | once per outage episode (no repeats every 30 seconds) |
-| Restart attempt | `WARNING` | for every actually executed recovery command, with the attempt counter |
-| Start command failed | `ALARM` | once per failing streak |
-| Restart limit reached | `ALARM` | once, when the restart window is exhausted and manual intervention is required |
-| Monitoring error | `ALARM` | once per episode when the check itself fails |
+| Watcher started | `SUCCESS` | on application startup, with the monitored service count |
+| Service added | `SUCCESS` | when a service is created via API or dashboard |
+| Service removed | `NOT_BUILT` | when a service is deleted |
+| Service down | `FAIL` | once per outage episode (no repeats every 30 seconds) |
+| Restart attempt | `UNSTABLE` | for every actually executed recovery command, with the attempt counter |
+| Start command failed | `FAILURE` | once per failing streak |
+| Restart limit reached | `FAILURE` | once, when the restart window is exhausted and manual intervention is required |
+| Monitoring error | `FAILURE` | once per episode when the check itself fails |
 | Service recovered | `OK` | when a previously failed service passes checks again |
 
 ### Transport
@@ -376,10 +376,10 @@ Host Guardian can push monitoring events to an external chat through an HTTP web
 Messages are POSTed to `notification.chat.url` as JSON:
 
 ```json
-{"peer": "...", "status": "ALARM", "message": "🔴 Сервис billing-api (хост prod-1) недоступен: Process is missing", "url": ""}
+{"peer": "...", "status": "FAIL", "message": "Сервис billing-api (хост prod-1) недоступен: Process is missing", "url": ""}
 ```
 
-The field set is compatible with the legacy SberChat sender, so an existing endpoint can be reused by configuring `url` and `peer` only. With a blank `url` messages go to the application log (log-only mode). Delivery is asynchronous on a dedicated thread, so a slow or unreachable chat never affects the monitoring loop or REST operations.
+The field set and the allowed `status` values (`OK`, `FAIL`, `SUCCESS`, `FAILURE`, `UNSTABLE`, `NOT_BUILT`, `ABORTED`) are compatible with the legacy SberChat sender, which accepts only those status codes. An existing endpoint can be reused by configuring `url` and `peer` only. With a blank `url` messages go to the application log (log-only mode). Delivery is asynchronous on a dedicated thread, so a slow or unreachable chat never affects the monitoring loop or REST operations.
 
 ### Three switch-off levels
 

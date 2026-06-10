@@ -20,9 +20,10 @@ import java.util.Map;
  * {@code {"peer": "...", "status": "...", "message": "...", "url": ""}}
  * whose field set matches the legacy SberChat sender, so an existing chat
  * endpoint can be plugged in by configuring {@code notification.chat.url}
- * and {@code notification.chat.peer} only. Generic webhook receivers simply
- * ignore the fields they do not need. An optional auth token is attached as
- * a configurable HTTP header.
+ * and {@code notification.chat.peer} only. The {@code status} field carries the
+ * provider status code from {@link MessageStatus#getValue()}; the chat backend
+ * accepts only those codes. Generic webhook receivers simply ignore the fields
+ * they do not need. An optional auth token is attached as a configurable HTTP header.
  *
  * <p>When no webhook URL is configured, the provider degrades to log-only mode:
  * messages are written to the application log instead of being dropped, which
@@ -56,9 +57,9 @@ public class WebhookChatProvider implements ChatProvider {
      */
     @Override
     public void send(ChatMessage message) {
-        String text = message.status().getMarker() + " " + message.text();
         if (properties.getUrl() == null || properties.getUrl().isBlank()) {
-            log.info("Chat webhook url is not configured, message logged only: {}", text);
+            log.info("Chat webhook url is not configured, message logged only: [{}] {}",
+                    message.status().getValue(), message.text());
             return;
         }
 
@@ -70,8 +71,8 @@ public class WebhookChatProvider implements ChatProvider {
 
         Map<String, String> payload = new LinkedHashMap<>();
         payload.put("peer", properties.getPeer() != null ? properties.getPeer() : "");
-        payload.put("status", message.status().name());
-        payload.put("message", text);
+        payload.put("status", message.status().getValue());
+        payload.put("message", message.text());
         payload.put("url", "");
 
         try {

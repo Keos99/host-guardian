@@ -1,46 +1,34 @@
 package com.example.guardian.notification;
 
 /**
- * Severity of a chat notification.
+ * Статусы сообщений для {@link ChatMessage}.
  *
- * <p>Every status carries a short unicode marker that is prepended to the
- * message text, so messages stay readable in plain-text chats without any
- * formatting support on the receiver side.
+ * <p>Набор значений зафиксирован контрактом чат-провайдера: он принимает только
+ * перечисленные статусы. Строковый код статуса ({@link #getValue()}) передается
+ * в поле {@code status} payload вебхука.
  */
 public enum MessageStatus {
 
-    /**
-     * Positive event, for example a service recovered.
-     */
-    OK("🟢"),
+    OK("OK"),
+    FAIL("FAIL"),
+    SUCCESS("SUCCESS"),
+    FAILURE("FAILURE"),
+    UNSTABLE("UNSTABLE"),
+    NOT_BUILT("NOT_BUILT"),
+    ABORTED("");
 
-    /**
-     * Neutral informational event, for example a configuration change.
-     */
-    INFO("🔵"),
+    private final String status;
 
-    /**
-     * Event that needs attention but not necessarily an action.
-     */
-    WARNING("🟡"),
-
-    /**
-     * Failure that likely requires operator intervention.
-     */
-    ALARM("🔴");
-
-    private final String marker;
-
-    MessageStatus(String marker) {
-        this.marker = marker;
+    MessageStatus(String status) {
+        this.status = status;
     }
 
     /**
-     * Returns the unicode marker shown before the message text.
+     * Возвращает строковый код статуса, передаваемый чат-провайдеру.
      *
-     * @return marker symbol for chat rendering
+     * @return код статуса, принимаемый провайдером
      */
-    public String getMarker() {
-        return marker;
+    public String getValue() {
+        return status;
     }
 }

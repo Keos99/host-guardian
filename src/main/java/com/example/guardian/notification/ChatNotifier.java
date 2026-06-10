@@ -91,7 +91,7 @@ public class ChatNotifier {
         if (!isGlobalEnabled()) {
             return;
         }
-        dispatch(MessageStatus.INFO,
+        dispatch(MessageStatus.SUCCESS,
                 () -> "Host Guardian запущен. Сервисов под мониторингом: "
                         + monitoredServiceRepository.count());
     }
@@ -105,7 +105,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.INFO, () -> "Добавлен новый сервис: " + describe(service));
+        dispatch(MessageStatus.SUCCESS, () -> "Добавлен новый сервис: " + describe(service));
     }
 
     /**
@@ -117,7 +117,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.INFO, () -> "Сервис удален из мониторинга: " + service.getName());
+        dispatch(MessageStatus.NOT_BUILT, () -> "Сервис удален из мониторинга: " + service.getName());
     }
 
     /**
@@ -130,7 +130,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.ALARM, () -> "Сервис " + describe(service) + " недоступен: " + reason);
+        dispatch(MessageStatus.FAIL, () -> "Сервис " + describe(service) + " недоступен: " + reason);
     }
 
     /**
@@ -155,7 +155,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.WARNING,
+        dispatch(MessageStatus.UNSTABLE,
                 () -> "Попытка запуска сервиса " + service.getName()
                         + ": " + attempt + " из " + service.getMaxRestartsInWindow()
                         + " в окне " + formatSeconds(service.getRestartWindowSeconds()));
@@ -171,7 +171,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.ALARM,
+        dispatch(MessageStatus.FAILURE,
                 () -> "Не удалось выполнить команду запуска сервиса " + service.getName() + ": " + reason);
     }
 
@@ -184,7 +184,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.ALARM,
+        dispatch(MessageStatus.FAILURE,
                 () -> "Не удалось перезапустить сервис " + service.getName()
                         + ": исчерпан лимит " + service.getMaxRestartsInWindow()
                         + " рестартов за " + formatSeconds(service.getRestartWindowSeconds())
@@ -201,7 +201,7 @@ public class ChatNotifier {
         if (!shouldNotify(service)) {
             return;
         }
-        dispatch(MessageStatus.ALARM,
+        dispatch(MessageStatus.FAILURE,
                 () -> "Не удалось проверить сервис " + service.getName() + ": " + reason);
     }
 
