@@ -8,6 +8,7 @@ import com.example.guardian.model.HostConfig;
 import com.example.guardian.model.HostConnectionMode;
 import com.example.guardian.model.MonitoredService;
 import com.example.guardian.model.ServiceGroup;
+import com.example.guardian.notification.ChatNotifier;
 import com.example.guardian.repository.HostConfigRepository;
 import com.example.guardian.repository.MonitoredServiceRepository;
 import com.example.guardian.repository.ServiceGroupRepository;
@@ -40,11 +41,15 @@ class ConfigurationServiceTest {
     @Mock
     private MonitoredServiceRepository monitoredServiceRepository;
 
+    @Mock
+    private ChatNotifier chatNotifier;
+
     private ConfigurationService service;
 
     @BeforeEach
     void setUp() {
-        service = new ConfigurationService(hostConfigRepository, serviceGroupRepository, monitoredServiceRepository);
+        service = new ConfigurationService(hostConfigRepository, serviceGroupRepository,
+                monitoredServiceRepository, chatNotifier);
     }
 
     @Test
@@ -228,6 +233,7 @@ class ConfigurationServiceTest {
                 600L,
                 3,
                 true,
+                true,
                 " "
         );
         when(monitoredServiceRepository.existsByNameIgnoreCase(" api ")).thenReturn(false);
@@ -251,7 +257,9 @@ class ConfigurationServiceTest {
         assertThat(created.getRestartWindowSeconds()).isEqualTo(600);
         assertThat(created.getMaxRestartsInWindow()).isEqualTo(3);
         assertThat(created.isMonitoringEnabled()).isTrue();
+        assertThat(created.isNotificationsEnabled()).isTrue();
         assertThat(created.getDescription()).isNull();
+        verify(chatNotifier).serviceAdded(created);
     }
 
     @Test
@@ -262,7 +270,7 @@ class ConfigurationServiceTest {
         MonitoredServiceRequest request = new MonitoredServiceRequest(
                 "api", 1L, null, "api.jar", null, "start api", false, " ",
                 null,
-                5L, 60L, 600L, 3, false, "updated"
+                5L, 60L, 600L, 3, false, false, "updated"
         );
 
         when(monitoredServiceRepository.existsByNameIgnoreCase("api")).thenReturn(true);
@@ -278,12 +286,17 @@ class ConfigurationServiceTest {
         assertThat(updated.getName()).isEqualTo("api");
         assertThat(updated.getGroup()).isNull();
         assertThat(updated.isMonitoringEnabled()).isFalse();
+        assertThat(updated.isNotificationsEnabled()).isFalse();
 
         updated = service.setMonitoringEnabled(10L, true);
         assertThat(updated.isMonitoringEnabled()).isTrue();
 
+        updated = service.setNotificationsEnabled(10L, true);
+        assertThat(updated.isNotificationsEnabled()).isTrue();
+
         service.deleteService(10L);
         verify(monitoredServiceRepository).delete(existing);
+        verify(chatNotifier).serviceRemoved(existing);
 
         when(monitoredServiceRepository.findById(404L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.getService(404L))
@@ -298,7 +311,7 @@ class ConfigurationServiceTest {
 
         MonitoredServiceRequest manualMissingCommand = new MonitoredServiceRequest(
                 "api", 1L, null, "api.jar", null, "start api", true, " ",
-                null, 5L, 60L, 600L, 3, true, null
+                null, 5L, 60L, 600L, 3, true, true, null
         );
         assertThatThrownBy(() -> service.createService(manualMissingCommand))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
@@ -306,7 +319,7 @@ class ConfigurationServiceTest {
 
         MonitoredServiceRequest automaticRestart = new MonitoredServiceRequest(
                 "api", 1L, null, "api.jar", null, "start api", false, " ",
-                null, 5L, 60L, 600L, 3, true, null
+                null, 5L, 60L, 600L, 3, true, true, null
         );
         when(monitoredServiceRepository.save(any(MonitoredService.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -325,7 +338,7 @@ class ConfigurationServiceTest {
         MonitoredServiceRequest request = new MonitoredServiceRequest(
                 "other", 1L, null, "api.jar", null, "start api", false, null,
                 null,
-                5L, 60L, 600L, 3, true, null
+                5L, 60L, 600L, 3, true, true, null
         );
 
         assertThatThrownBy(() -> service.updateService(10L, request))

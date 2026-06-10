@@ -77,6 +77,7 @@ public class ApiMapper {
                 service.getRestartWindowSeconds(),
                 service.getMaxRestartsInWindow(),
                 service.isMonitoringEnabled(),
+                service.isNotificationsEnabled(),
                 service.getDescription()
         );
     }
@@ -107,6 +108,7 @@ public class ApiMapper {
                 service.getGroup() != null ? service.getGroup().getId() : null,
                 service.getGroup() != null ? service.getGroup().getName() : null,
                 service.isMonitoringEnabled(),
+                service.isNotificationsEnabled(),
                 status,
                 snapshot != null && snapshot.processRunning(),
                 snapshot != null ? snapshot.lastKnownPid() : service.getLastKnownPid(),

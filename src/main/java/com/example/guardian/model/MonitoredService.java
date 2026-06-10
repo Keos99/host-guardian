@@ -68,6 +68,9 @@ public class MonitoredService {
     @Column(nullable = false)
     private boolean monitoringEnabled = true;
 
+    @Column(nullable = false)
+    private boolean notificationsEnabled = true;
+
     @Column(length = 2000)
     private String description;
 
@@ -317,6 +320,24 @@ public class MonitoredService {
      */
     public void setMonitoringEnabled(boolean monitoringEnabled) {
         this.monitoringEnabled = monitoringEnabled;
+    }
+
+    /**
+     * Checks whether chat notifications are enabled for this service.
+     *
+     * @return {@code true} when events of this service may be sent to the chat
+     */
+    public boolean isNotificationsEnabled() {
+        return notificationsEnabled;
+    }
+
+    /**
+     * Sets whether chat notifications are enabled for this service.
+     *
+     * @param notificationsEnabled {@code true} to send events of this service to the chat
+     */
+    public void setNotificationsEnabled(boolean notificationsEnabled) {
+        this.notificationsEnabled = notificationsEnabled;
     }
 
     /**

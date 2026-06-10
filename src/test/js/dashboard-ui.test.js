@@ -226,6 +226,7 @@ test("save buttons stay busy until save and post-save refresh finish", async () 
     element("serviceRestartWindowSeconds").value = "600";
     element("serviceMaxRestartsInWindow").value = "3";
     element("serviceMonitoringEnabled").checked = true;
+    element("serviceNotificationsEnabled").checked = true;
     element("serviceDescription").value = "";
 
     const button = createElement("saveButton");
@@ -264,10 +265,54 @@ test("save buttons stay busy until save and post-save refresh finish", async () 
         restartWindowSeconds: 600,
         maxRestartsInWindow: 3,
         monitoringEnabled: true,
+        notificationsEnabled: true,
         description: null
     });
     assert.equal(button.disabled, false);
     assert.equal(button.classList.contains("is-loading"), false);
+});
+
+test("notification controls follow the feature flag from the dashboard payload", () => {
+    const {context} = loadApp();
+    const element = (id) => context.document.getElementById(id);
+    const servicesBody = element("servicesTableBody");
+    const serviceRow = {
+        id: 7,
+        name: "billing",
+        hostName: "local",
+        hostAddress: "127.0.0.1",
+        groupName: null,
+        monitoringEnabled: true,
+        notificationsEnabled: false,
+        status: "UP",
+        processRunning: true,
+        lastKnownPid: 1234,
+        healthCheckEnabled: false,
+        healthCheckPassed: false,
+        lastCheckAt: null,
+        lastMessage: "ok"
+    };
+
+    vm.runInContext(`state.notifications = {featureEnabled: false, globalEnabled: true};`, context);
+    context.updateNotificationControls();
+    context.renderServicesTable([serviceRow]);
+
+    assert.equal(element("toggleNotificationsButton").classList.contains("hidden"), true);
+    assert.equal(element("serviceNotificationsField").classList.contains("hidden"), true);
+    assert.doesNotMatch(servicesBody.innerHTML, /data-action="toggle-notifications"/);
+    assert.doesNotMatch(servicesBody.innerHTML, /alerts off/);
+
+    vm.runInContext(`state.notifications = {featureEnabled: true, globalEnabled: false};`, context);
+    context.updateNotificationControls();
+    context.renderServicesTable([serviceRow]);
+
+    assert.equal(element("toggleNotificationsButton").classList.contains("hidden"), false);
+    assert.equal(element("toggleNotificationsButton").classList.contains("notifications-off"), true);
+    assert.equal(element("toggleNotificationsButton").textContent, "Оповещения: выкл");
+    assert.equal(element("serviceNotificationsField").classList.contains("hidden"), false);
+    assert.match(servicesBody.innerHTML, /data-action="toggle-notifications"/);
+    assert.match(servicesBody.innerHTML, /Вкл\. оповещения/);
+    assert.match(servicesBody.innerHTML, /alerts off/);
 });
 
 test("dashboard renders pid and off for services without health-check url", () => {

@@ -7,11 +7,13 @@ import com.example.guardian.model.HostConfig;
 import com.example.guardian.model.HostConnectionMode;
 import com.example.guardian.model.MonitoredService;
 import com.example.guardian.model.ServiceGroup;
+import com.example.guardian.notification.ChatNotifier;
 import com.example.guardian.repository.HostConfigRepository;
 import com.example.guardian.repository.MonitoredServiceRepository;
 import com.example.guardian.repository.ServiceGroupRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
@@ -28,6 +30,7 @@ public class ConfigurationService {
     private final HostConfigRepository hostConfigRepository;
     private final ServiceGroupRepository serviceGroupRepository;
     private final MonitoredServiceRepository monitoredServiceRepository;
+    private final ChatNotifier chatNotifier;
 
     /**
      * Creates a configuration service.
@@ -35,13 +38,16 @@ public class ConfigurationService {
      * @param hostConfigRepository repository for host configurations
      * @param serviceGroupRepository repository for logical service groups
      * @param monitoredServiceRepository repository for monitored service definitions
+     * @param chatNotifier notifier for configuration change events
      */
     public ConfigurationService(HostConfigRepository hostConfigRepository,
                                 ServiceGroupRepository serviceGroupRepository,
-                                MonitoredServiceRepository monitoredServiceRepository) {
+                                MonitoredServiceRepository monitoredServiceRepository,
+                                ChatNotifier chatNotifier) {
         this.hostConfigRepository = hostConfigRepository;
         this.serviceGroupRepository = serviceGroupRepository;
         this.monitoredServiceRepository = monitoredServiceRepository;
+        this.chatNotifier = chatNotifier;
     }
 
     /**
@@ -215,7 +221,9 @@ public class ConfigurationService {
 
         MonitoredService service = new MonitoredService();
         applyServiceRequest(service, request);
-        return monitoredServiceRepository.save(service);
+        MonitoredService saved = monitoredServiceRepository.save(service);
+        chatNotifier.serviceAdded(saved);
+        return saved;
     }
 
     /**
@@ -239,13 +247,35 @@ public class ConfigurationService {
     /**
      * Updates only the automatic monitoring flag of a service.
      *
+     * <p>The method is transactional so the loaded entity stays managed and
+     * {@code save} returns the same instance with an initialized host. Saving
+     * a detached entity returns a merge copy whose lazy host proxy cannot be
+     * mapped to a REST response outside the session.
+     *
      * @param id service identifier
      * @param enabled requested monitoring flag
      * @return persisted monitored service
      */
+    @Transactional
     public MonitoredService setMonitoringEnabled(Long id, boolean enabled) {
         MonitoredService service = getService(id);
         service.setMonitoringEnabled(enabled);
+        return monitoredServiceRepository.save(service);
+    }
+
+    /**
+     * Updates only the chat notification flag of a service.
+     *
+     * <p>Transactional for the same reason as {@link #setMonitoringEnabled}.
+     *
+     * @param id service identifier
+     * @param enabled requested notification flag
+     * @return persisted monitored service
+     */
+    @Transactional
+    public MonitoredService setNotificationsEnabled(Long id, boolean enabled) {
+        MonitoredService service = getService(id);
+        service.setNotificationsEnabled(enabled);
         return monitoredServiceRepository.save(service);
     }
 
@@ -255,7 +285,9 @@ public class ConfigurationService {
      * @param id service identifier
      */
     public void deleteService(Long id) {
-        monitoredServiceRepository.delete(getService(id));
+        MonitoredService service = getService(id);
+        monitoredServiceRepository.delete(service);
+        chatNotifier.serviceRemoved(service);
     }
 
     /**
@@ -330,6 +362,7 @@ public class ConfigurationService {
         service.setRestartWindowSeconds(request.restartWindowSeconds());
         service.setMaxRestartsInWindow(request.maxRestartsInWindow());
         service.setMonitoringEnabled(request.monitoringEnabled());
+        service.setNotificationsEnabled(request.notificationsEnabled());
         service.setDescription(trimToNull(request.description()));
     }
 

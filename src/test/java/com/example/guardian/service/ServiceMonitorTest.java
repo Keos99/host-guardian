@@ -6,6 +6,7 @@ import com.example.guardian.model.HostConfig;
 import com.example.guardian.model.MonitoredService;
 import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
+import com.example.guardian.notification.ChatNotifier;
 import com.example.guardian.repository.MonitoredServiceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,7 +17,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +46,9 @@ class ServiceMonitorTest {
     @Mock
     private HostShellExecutor hostShellExecutor;
 
+    @Mock
+    private ChatNotifier chatNotifier;
+
     private MonitorProperties monitorProperties;
     private ServiceMonitor monitor;
 
@@ -57,7 +60,8 @@ class ServiceMonitorTest {
                 processInspector,
                 healthChecker,
                 hostShellExecutor,
-                monitorProperties
+                monitorProperties,
+                chatNotifier
         );
     }
 
@@ -388,6 +392,121 @@ class ServiceMonitorTest {
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.DOWN);
         assertThat(snapshot.lastMessage()).isEqualTo("Health-check failed");
         verify(hostShellExecutor, never()).execute(any(), any(), any());
+    }
+
+    @Test
+    void downAlertIsSentOncePerEpisodeAndRecoveryIsReported() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        stubProcessFound(service, 1234L);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout()))
+                .thenReturn(false, false, true);
+
+        monitor.checkAll();
+        monitor.checkAll();
+
+        verify(chatNotifier, times(1)).serviceDown(service, "Health-check failed");
+        verify(chatNotifier, never()).serviceRecovered(service);
+
+        monitor.checkAll();
+
+        verify(chatNotifier, times(1)).serviceRecovered(service);
+    }
+
+    @Test
+    void recoveryIsNotReportedWhenServiceWasNeverDown() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        stubProcessFound(service, 1234L);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+
+        monitor.checkAll();
+
+        verify(chatNotifier, never()).serviceRecovered(any());
+        verify(chatNotifier, never()).serviceDown(any(), any());
+    }
+
+    @Test
+    void restartAttemptIsReportedForEveryExecutedStart() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        stubProcessMissing(service);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
+                .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
+
+        monitor.checkAll();
+
+        verify(chatNotifier).restartAttempt(service, 1);
+        verify(chatNotifier, never()).restartFailed(any(), any());
+    }
+
+    @Test
+    void startFailureIsReportedOncePerFailureStreak() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        stubProcessMissing(service);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
+                .thenReturn(new CommandExecutor.CommandResult(1, null, "boom"));
+
+        monitor.checkAll();
+        monitor.checkAll();
+
+        verify(chatNotifier, times(1)).restartAttempt(service, 1);
+        verify(chatNotifier, times(1)).restartFailed(service, "boom");
+        verify(hostShellExecutor, times(2))
+                .execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout());
+    }
+
+    @Test
+    void restartLimitAlertIsSentOnceWhenWindowIsExhausted() {
+        MonitoredService service = monitoredService(1);
+        service.setMaxRestartsInWindow(1);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        stubProcessMissing(service);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
+                .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
+
+        monitor.checkAll();
+        monitor.checkAll();
+        monitor.checkAll();
+
+        verify(chatNotifier, times(1)).restartAttempt(service, 1);
+        verify(chatNotifier, times(1)).restartLimitReached(service);
+        verify(hostShellExecutor, times(1))
+                .execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout());
+    }
+
+    @Test
+    void cooldownBlockWithoutExhaustedWindowDoesNotRaiseLimitAlert() {
+        MonitoredService service = monitoredService(1);
+        service.setRestartCooldownSeconds(3600);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        stubProcessMissing(service);
+        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
+                .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
+
+        monitor.checkAll();
+        monitor.checkAll();
+
+        verify(chatNotifier, never()).restartLimitReached(any());
+    }
+
+    @Test
+    void monitoringErrorIsReportedOncePerEpisode() {
+        MonitoredService service = monitoredService(1);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
+        when(processInspector.findFirst(service.getHost(), service.getProcessMatch()))
+                .thenThrow(new IllegalStateException("process checker failed"));
+
+        monitor.checkAll();
+        monitor.checkAll();
+
+        verify(chatNotifier, times(1))
+                .monitoringError(service, "Unexpected monitoring error: process checker failed");
     }
 
     private void stubProcessFound(MonitoredService service, long pid) {

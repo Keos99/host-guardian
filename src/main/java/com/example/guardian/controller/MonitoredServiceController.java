@@ -308,6 +308,55 @@ public class MonitoredServiceController {
     }
 
     /**
+     * Enables or disables chat notifications for a service.
+     *
+     * @param id service identifier
+     * @param enabled requested notification flag
+     * @return updated service as a REST DTO
+     */
+    @Operation(
+            summary = "Enable or disable chat notifications",
+            description = """
+                    Updates only the notificationsEnabled flag. Events of services with disabled
+                    notifications are never sent to the chat, while monitoring itself keeps working.
+                    """
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Notification flag was updated successfully",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = MonitoredServiceResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "The enabled query parameter could not be parsed",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ProblemDetail.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Service was not found",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ProblemDetail.class)
+                    )
+            )
+    })
+    @PatchMapping("/{id}/notifications")
+    public MonitoredServiceResponse setNotificationsEnabled(
+            @Parameter(description = "Identifier of the monitored service", example = "1")
+            @PathVariable Long id,
+            @Parameter(description = "New chat notification flag", example = "true")
+            @RequestParam boolean enabled) {
+        return apiMapper.toServiceResponse(configurationService.setNotificationsEnabled(id, enabled));
+    }
+
+    /**
      * Triggers an immediate checked recovery action for a service.
      *
      * @param id service identifier
