@@ -9,22 +9,29 @@ import com.example.guardian.api.HostRequest;
 import com.example.guardian.api.HostResponse;
 import com.example.guardian.api.MonitoredServiceRequest;
 import com.example.guardian.api.MonitoredServiceResponse;
+import com.example.guardian.api.NotificationStatusResponse;
 import com.example.guardian.model.HostConfig;
 import com.example.guardian.model.HostConnectionMode;
 import com.example.guardian.model.MonitoredService;
 import com.example.guardian.model.ServiceGroup;
 import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
+import com.example.guardian.notification.NotificationProperties;
+import com.example.guardian.notification.NotificationSettingsService;
 import com.example.guardian.service.ConfigurationService;
 import com.example.guardian.service.ServiceMonitor;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,7 +43,11 @@ class ControllerTest {
     void dashboardControllerReturnsSummaryGroupsAndServices() {
         ConfigurationService configurationService = mock(ConfigurationService.class);
         ServiceMonitor serviceMonitor = mock(ServiceMonitor.class);
-        DashboardController controller = new DashboardController(configurationService, serviceMonitor, apiMapper);
+        NotificationProperties notificationProperties = new NotificationProperties();
+        NotificationSettingsService notificationSettings = mock(NotificationSettingsService.class);
+        when(notificationSettings.isGlobalEnabled()).thenReturn(false);
+        DashboardController controller = new DashboardController(configurationService, serviceMonitor, apiMapper,
+                notificationProperties, notificationSettings);
         HostConfig host = TestFixtures.localHost(1);
         ServiceGroup group = TestFixtures.group(2);
         List<MonitoredService> services = List.of(
@@ -68,6 +79,39 @@ class ControllerTest {
         assertThat(response.summary().restarting()).isEqualTo(1);
         assertThat(response.summary().error()).isEqualTo(1);
         assertThat(response.summary().unknown()).isEqualTo(1);
+        assertThat(response.notifications().featureEnabled()).isTrue();
+        assertThat(response.notifications().globalEnabled()).isFalse();
+    }
+
+    @Test
+    void notificationControllerReadsAndTogglesGlobalSwitch() {
+        NotificationProperties properties = new NotificationProperties();
+        NotificationSettingsService settings = mock(NotificationSettingsService.class);
+        NotificationController controller = new NotificationController(properties, settings);
+        when(settings.isGlobalEnabled()).thenReturn(true);
+        when(settings.setGlobalEnabled(false)).thenReturn(false);
+
+        NotificationStatusResponse status = controller.getStatus();
+        NotificationStatusResponse toggled = controller.setGlobalEnabled(false);
+
+        assertThat(status.featureEnabled()).isTrue();
+        assertThat(status.globalEnabled()).isTrue();
+        assertThat(toggled.featureEnabled()).isTrue();
+        assertThat(toggled.globalEnabled()).isFalse();
+        verify(settings).setGlobalEnabled(false);
+    }
+
+    @Test
+    void notificationControllerRejectsToggleWhenFeatureIsDisabled() {
+        NotificationProperties properties = new NotificationProperties();
+        properties.setEnabled(false);
+        NotificationSettingsService settings = mock(NotificationSettingsService.class);
+        NotificationController controller = new NotificationController(properties, settings);
+
+        assertThatThrownBy(() -> controller.setGlobalEnabled(true))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+        verify(settings, never()).setGlobalEnabled(true);
     }
 
     @Test
@@ -133,6 +177,7 @@ class ControllerTest {
                 600L,
                 3,
                 true,
+                true,
                 "desc"
         );
         when(configurationService.getServices(List.of(2L))).thenReturn(List.of(service));
@@ -140,12 +185,14 @@ class ControllerTest {
         when(configurationService.createService(request)).thenReturn(service);
         when(configurationService.updateService(3L, request)).thenReturn(service);
         when(configurationService.setMonitoringEnabled(3L, false)).thenReturn(service);
+        when(configurationService.setNotificationsEnabled(3L, false)).thenReturn(service);
 
         List<MonitoredServiceResponse> services = controller.listServices(List.of(2L));
         MonitoredServiceResponse found = controller.getService(3L);
         MonitoredServiceResponse created = controller.createService(request);
         MonitoredServiceResponse updated = controller.updateService(3L, request);
         MonitoredServiceResponse toggled = controller.setMonitoringEnabled(3L, false);
+        MonitoredServiceResponse notificationsToggled = controller.setNotificationsEnabled(3L, false);
         controller.restartService(3L);
         controller.checkServiceNow(3L);
         controller.deleteService(3L);
@@ -155,6 +202,8 @@ class ControllerTest {
         assertThat(created.name()).isEqualTo("billing-api");
         assertThat(updated.hostId()).isEqualTo(1);
         assertThat(toggled.id()).isEqualTo(3);
+        assertThat(notificationsToggled.id()).isEqualTo(3);
+        verify(configurationService).setNotificationsEnabled(3L, false);
         verify(serviceMonitor).restartNow(3L);
         verify(serviceMonitor).refreshSingle(3L);
         verify(configurationService).deleteService(3L);

@@ -25,6 +25,9 @@ public class ServiceState {
     private boolean healthCheckEnabled;
     private boolean healthCheckPassed;
     private String lastMessage = "Service has not been checked yet";
+    private boolean downAlertSent;
+    private boolean startFailureAlertSent;
+    private boolean restartLimitAlertSent;
     private final Deque<Instant> restartHistory = new ArrayDeque<>();
 
     /**
@@ -149,6 +152,63 @@ public class ServiceState {
      */
     public void setLastMessage(String lastMessage) {
         this.lastMessage = lastMessage;
+    }
+
+    /**
+     * Возвращает, отправлен ли уже алерт о недоступности сервиса.
+     *
+     * <p>Флаг защищает чат от спама: пока сервис не восстановится, повторные
+     * циклы мониторинга не должны слать одинаковые сообщения.
+     *
+     * @return {@code true}, если алерт о текущем эпизоде недоступности уже отправлен
+     */
+    public boolean isDownAlertSent() {
+        return downAlertSent;
+    }
+
+    /**
+     * Сохраняет признак отправленного алерта о недоступности.
+     *
+     * @param downAlertSent {@code true}, если алерт отправлен
+     */
+    public void setDownAlertSent(boolean downAlertSent) {
+        this.downAlertSent = downAlertSent;
+    }
+
+    /**
+     * Возвращает, отправлен ли алерт о неудачной команде запуска.
+     *
+     * @return {@code true}, если алерт о текущей серии неудачных запусков уже отправлен
+     */
+    public boolean isStartFailureAlertSent() {
+        return startFailureAlertSent;
+    }
+
+    /**
+     * Сохраняет признак отправленного алерта о неудачной команде запуска.
+     *
+     * @param startFailureAlertSent {@code true}, если алерт отправлен
+     */
+    public void setStartFailureAlertSent(boolean startFailureAlertSent) {
+        this.startFailureAlertSent = startFailureAlertSent;
+    }
+
+    /**
+     * Возвращает, отправлен ли алерт об исчерпании лимита рестартов.
+     *
+     * @return {@code true}, если алерт об исчерпании лимита уже отправлен
+     */
+    public boolean isRestartLimitAlertSent() {
+        return restartLimitAlertSent;
+    }
+
+    /**
+     * Сохраняет признак отправленного алерта об исчерпании лимита рестартов.
+     *
+     * @param restartLimitAlertSent {@code true}, если алерт отправлен
+     */
+    public void setRestartLimitAlertSent(boolean restartLimitAlertSent) {
+        this.restartLimitAlertSent = restartLimitAlertSent;
     }
 
     /**

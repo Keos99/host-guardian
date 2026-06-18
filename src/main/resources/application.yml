@@ -18,6 +18,22 @@ spring:
       enabled: true
       path: /h2-console
 
+notification:
+  chat:
+    # Master switch of the chat notification feature. When false, nothing is
+    # sent and the dashboard hides all notification controls.
+    enabled: true
+    # Webhook endpoint that accepts {"peer", "status", "message", "url"} JSON
+    # (the same payload shape as the legacy SberChat sender).
+    # Leave blank to write messages to the application log only.
+    url: ""
+    # Recipient identifier sent as the "peer" payload field.
+    peer: ""
+    auth-header-name: Authorization
+    auth-token: ""
+    connect-timeout: 5s
+    read-timeout: 10s
+
 monitor:
   interval: 30s
   ssh:

@@ -22,6 +22,7 @@ import jakarta.validation.constraints.NotNull;
  * @param restartWindowSeconds rolling window used to enforce restart limits
  * @param maxRestartsInWindow maximum number of restarts allowed in the window
  * @param monitoringEnabled whether periodic monitoring is active for the service
+ * @param notificationsEnabled whether chat notifications are active for the service
  * @param description optional service description shown in the UI
  */
 @Schema(description = "Payload used to create or update a monitored service definition.")
@@ -67,6 +68,9 @@ public record MonitoredServiceRequest(
 
         @Schema(description = "Whether periodic monitoring is active for the service.", example = "true")
         boolean monitoringEnabled,
+
+        @Schema(description = "Whether chat notifications are active for the service.", example = "true")
+        boolean notificationsEnabled,
 
         @Schema(description = "Optional service description.", example = "Main billing backend process.", nullable = true)
         String description

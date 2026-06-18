@@ -70,6 +70,7 @@ class ApiMapperTest {
         assertThat(response.restartWindowSeconds()).isEqualTo(600);
         assertThat(response.maxRestartsInWindow()).isEqualTo(3);
         assertThat(response.monitoringEnabled()).isTrue();
+        assertThat(response.notificationsEnabled()).isTrue();
         assertThat(response.description()).isEqualTo("Billing service");
     }
 
@@ -86,6 +87,7 @@ class ApiMapperTest {
     @Test
     void mapsDashboardServiceWithSnapshot() {
         MonitoredService service = TestFixtures.service(3, TestFixtures.sshHost(1), TestFixtures.group(2));
+        service.setNotificationsEnabled(false);
         Instant checkAt = Instant.parse("2026-05-03T10:15:30Z");
         Instant restartAt = Instant.parse("2026-05-03T10:10:30Z");
         ServiceRuntimeSnapshot snapshot = new ServiceRuntimeSnapshot(
@@ -102,6 +104,7 @@ class ApiMapperTest {
         DashboardServiceResponse response = mapper.toDashboardServiceResponse(service, snapshot);
 
         assertThat(response.status()).isEqualTo(ServiceHealthStatus.UP);
+        assertThat(response.notificationsEnabled()).isFalse();
         assertThat(response.processRunning()).isTrue();
         assertThat(response.lastKnownPid()).isEqualTo(1234L);
         assertThat(response.healthCheckEnabled()).isTrue();

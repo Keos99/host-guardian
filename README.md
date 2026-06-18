@@ -51,6 +51,8 @@ Host Guardian addresses that by moving service definitions into the database, at
 - Start-only recovery for missing services and checked manual restart flow for failed health checks.
 - Cooldown and restart-window protection for restart attempts.
 - Manual `restart` and manual `check` actions through REST API and dashboard.
+- Chat notifications about monitoring events through a configurable HTTP webhook: service down/recovered, restart attempts and failures, exhausted restart limit, service added/removed, watcher startup.
+- Notification control on three levels: master switch in `application.yml`, runtime global toggle, and a per-service toggle on the dashboard.
 - Built-in dashboard for creating, editing, deleting, filtering, and operating monitored services.
 - SSH provider switch: system `ssh` client or JSch library.
 - Flyway-managed schema migrations.
@@ -277,6 +279,16 @@ Defined in [application.yml](D:\hi-lt-atm\hi-lt-watcher\src\main\resources\appli
 Relevant default settings:
 
 ```yaml
+notification:
+  chat:
+    enabled: true        # master switch of the notification feature
+    url: ""              # chat webhook; blank = log-only mode
+    peer: ""             # recipient id sent as the "peer" payload field
+    auth-header-name: Authorization
+    auth-token: ""
+    connect-timeout: 5s
+    read-timeout: 10s
+
 monitor:
   interval: 30s
   ssh:
@@ -341,6 +353,42 @@ The remote health-check behavior matters because many internal health endpoints 
 
 ---
 
+## Chat Notifications
+
+Host Guardian can push monitoring events to an external chat through an HTTP webhook.
+
+### Events
+
+| Event | Status | When it is sent |
+|---|---|---|
+| Watcher started | `SUCCESS` | on application startup, with the monitored service count |
+| Service added | `SUCCESS` | when a service is created via API or dashboard |
+| Service removed | `NOT_BUILT` | when a service is deleted |
+| Service down | `FAIL` | once per outage episode (no repeats every 30 seconds) |
+| Restart attempt | `UNSTABLE` | for every actually executed recovery command, with the attempt counter |
+| Start command failed | `FAILURE` | once per failing streak |
+| Restart limit reached | `FAILURE` | once, when the restart window is exhausted and manual intervention is required |
+| Monitoring error | `FAILURE` | once per episode when the check itself fails |
+| Service recovered | `OK` | when a previously failed service passes checks again |
+
+### Transport
+
+Messages are POSTed to `notification.chat.url` as JSON:
+
+```json
+{"peer": "...", "status": "FAIL", "message": "Сервис billing-api (хост prod-1) недоступен: Process is missing", "url": ""}
+```
+
+The field set and the allowed `status` values (`OK`, `FAIL`, `SUCCESS`, `FAILURE`, `UNSTABLE`, `NOT_BUILT`, `ABORTED`) are compatible with the legacy SberChat sender, which accepts only those status codes. An existing endpoint can be reused by configuring `url` and `peer` only. With a blank `url` messages go to the application log (log-only mode). Delivery is asynchronous on a dedicated thread, so a slow or unreachable chat never affects the monitoring loop or REST operations.
+
+### Three switch-off levels
+
+1. `notification.chat.enabled=false` in `application.yml` — the feature is fully disabled and the dashboard hides all notification controls.
+2. The global "Оповещения" toggle on the dashboard — persisted in the database (`app_setting` table) and survives restarts.
+3. The per-service toggle — an action menu item on the dashboard or the service form checkbox.
+
+---
+
 ## Web Dashboard
 
 The built-in dashboard lives at `/` and is backed entirely by the project itself.
@@ -354,6 +402,7 @@ The built-in dashboard lives at `/` and is backed entirely by the project itself
 - manually trigger service check;
 - manually trigger service restart;
 - pause or resume monitoring per service;
+- enable or disable chat notifications globally and per service (controls are visible only when `notification.chat.enabled` is on);
 - inspect latest status, process result, PID, Health check state, and last message;
 - show busy animation while saving or executing service operations.
 
@@ -405,8 +454,16 @@ Base UI and API are served from the same application.
 | `PUT` | `/api/services/{id}` | Update service |
 | `DELETE` | `/api/services/{id}` | Delete service |
 | `PATCH` | `/api/services/{id}/monitoring?enabled=true|false` | Pause/resume monitoring |
+| `PATCH` | `/api/services/{id}/notifications?enabled=true|false` | Enable/disable chat notifications for the service |
 | `POST` | `/api/services/{id}/restart` | Trigger checked restart/start recovery |
 | `POST` | `/api/services/{id}/check` | Trigger immediate check |
+
+### Notifications
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/notifications` | Get notification feature state |
+| `PATCH` | `/api/notifications?enabled=true|false` | Toggle the runtime global switch (409 when the feature is disabled by configuration) |
 
 ### Dashboard
 

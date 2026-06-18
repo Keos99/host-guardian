@@ -18,6 +18,7 @@ import java.time.Instant;
  * @param groupId optional identifier of the logical service group
  * @param groupName optional name of the logical service group
  * @param monitoringEnabled flag showing whether automatic monitoring is active
+ * @param notificationsEnabled flag showing whether chat notifications are active for the service
  * @param status last calculated service health status
  * @param processRunning whether the service process was found during the last check
  * @param lastKnownPid latest persisted or runtime PID
@@ -55,6 +56,9 @@ public record DashboardServiceResponse(
 
         @Schema(description = "Whether automatic monitoring is enabled.", example = "true")
         boolean monitoringEnabled,
+
+        @Schema(description = "Whether chat notifications are enabled for the service.", example = "true")
+        boolean notificationsEnabled,
 
         @Schema(description = "Latest calculated health status.", example = "UP")
         ServiceHealthStatus status,

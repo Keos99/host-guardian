@@ -4,6 +4,7 @@ import com.example.guardian.model.MonitoredService;
 import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceState;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
+import com.example.guardian.notification.ChatNotifier;
 import com.example.guardian.repository.MonitoredServiceRepository;
 import com.example.guardian.config.MonitorProperties;
 import org.springframework.http.HttpStatus;
@@ -46,6 +47,7 @@ public class ServiceMonitor {
     private final HttpHealthChecker healthChecker;
     private final HostShellExecutor hostShellExecutor;
     private final MonitorProperties monitorProperties;
+    private final ChatNotifier chatNotifier;
 
     private final Map<Long, ServiceState> states = new ConcurrentHashMap<>();
 
@@ -56,17 +58,20 @@ public class ServiceMonitor {
      * @param processInspector компонент для поиска процессов на хосте
      * @param healthChecker компонент для HTTP health-check
      * @param hostShellExecutor компонент для выполнения shell-команд на нужном хосте
+     * @param chatNotifier компонент для оповещений в чат о событиях мониторинга
      */
     public ServiceMonitor(MonitoredServiceRepository monitoredServiceRepository,
                           LinuxProcessInspector processInspector,
                           HttpHealthChecker healthChecker,
                           HostShellExecutor hostShellExecutor,
-                          MonitorProperties monitorProperties) {
+                          MonitorProperties monitorProperties,
+                          ChatNotifier chatNotifier) {
         this.monitoredServiceRepository = monitoredServiceRepository;
         this.processInspector = processInspector;
         this.healthChecker = healthChecker;
         this.hostShellExecutor = hostShellExecutor;
         this.monitorProperties = monitorProperties;
+        this.chatNotifier = chatNotifier;
     }
 
     /**
@@ -112,7 +117,7 @@ public class ServiceMonitor {
 
         if (checkResult.serviceHealthy()) {
             log.debug("Service {} is OK", service.getName());
-            markHealthy(state, "Service is healthy");
+            markHealthy(service, state, "Service is healthy");
             return;
         }
 
@@ -120,7 +125,7 @@ public class ServiceMonitor {
                 service.getName(), checkResult.processRunning(), checkResult.healthCheckEnabled()
                         ? checkResult.healthCheckPassed()
                         : null);
-        markUnhealthy(state, checkResult);
+        markUnhealthy(service, state, checkResult);
 
         if (!allowRecoveryStart) {
             return;
@@ -130,9 +135,14 @@ public class ServiceMonitor {
             return;
         }
 
-        if (!canRunRecoveryAction(service)) {
+        RecoveryPolicyDecision decision = evaluateRecoveryPolicy(service, state);
+        if (!decision.allowed()) {
             log.error("Start denied by cooldown/window policy for service {}", service.getName());
             state.setLastMessage(state.getLastMessage() + ". Start blocked by policy");
+            if (decision.windowExhausted() && !state.isRestartLimitAlertSent()) {
+                chatNotifier.restartLimitReached(service);
+                state.setRestartLimitAlertSent(true);
+            }
             return;
         }
 
@@ -150,20 +160,21 @@ public class ServiceMonitor {
      * </ul>
      *
      * <p>Устаревшие записи истории, которые уже не попадают в окно, автоматически
-     * удаляются перед вычислением текущего лимита.
+     * удаляются перед вычислением текущего лимита. Причина запрета возвращается
+     * отдельно: исчерпание лимита в окне означает, что без ручного вмешательства
+     * автоматика сервис уже не поднимет, и об этом нужно оповестить.
      *
      * @param service конфигурация сервиса
-     * @return {@code true}, если recovery-действие разрешено; иначе {@code false}
+     * @param state runtime-состояние сервиса
+     * @return решение recovery-политики с причиной запрета
      */
-    private boolean canRunRecoveryAction(MonitoredService service) {
-        ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
+    private RecoveryPolicyDecision evaluateRecoveryPolicy(MonitoredService service, ServiceState state) {
         Instant now = Instant.now();
 
+        boolean cooldownActive = false;
         if (state.getLastRestartAt() != null) {
             Duration sinceLast = Duration.between(state.getLastRestartAt(), now);
-            if (sinceLast.compareTo(service.getRestartCooldown()) < 0) {
-                return false;
-            }
+            cooldownActive = sinceLast.compareTo(service.getRestartCooldown()) < 0;
         }
 
         Instant windowStart = now.minus(service.getRestartWindow());
@@ -171,8 +182,9 @@ public class ServiceMonitor {
                 && state.getRestartHistory().peekFirst().isBefore(windowStart)) {
             state.getRestartHistory().pollFirst();
         }
+        boolean windowExhausted = state.getRestartHistory().size() >= service.getMaxRestartsInWindow();
 
-        return state.getRestartHistory().size() < service.getMaxRestartsInWindow();
+        return new RecoveryPolicyDecision(!cooldownActive && !windowExhausted, windowExhausted);
     }
 
     /**
@@ -187,6 +199,8 @@ public class ServiceMonitor {
      */
     private void restart(MonitoredService service) {
         log.warn("Restarting service {}", service.getName());
+        ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
+        notifyRestartAttempt(service, state);
 
         CommandExecutor.CommandResult restartResult = service.isManualRestartEnabled()
                 ? executeServiceCommand(service, service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout())
@@ -198,11 +212,12 @@ public class ServiceMonitor {
                 );
 
         if (!restartResult.success()) {
-            ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
+            String reason = firstNonBlank(restartResult.error(), restartResult.output(), "Unknown error");
             state.setStatus(ServiceHealthStatus.ERROR);
-            state.setLastMessage("Restart failed: " + firstNonBlank(restartResult.error(), restartResult.output(), "Unknown error"));
+            state.setLastMessage("Restart failed: " + reason);
             log.error("Restart failed for service {}. exitCode={}, error={}, output={}",
                     service.getName(), restartResult.exitCode(), restartResult.error(), restartResult.output());
+            notifyStartFailure(service, state, reason);
             return;
         }
 
@@ -213,22 +228,24 @@ public class ServiceMonitor {
         );
 
         if (startResult.success()) {
-            ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
             recordSuccessfulServiceAction(state, "Restart and start commands executed successfully");
 
             log.info("Restart and start commands executed for service {}. Restart output: {}. Start output: {}",
                     service.getName(), restartResult.output(), startResult.output());
         } else {
-            ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
+            String reason = firstNonBlank(startResult.error(), startResult.output(), "Unknown error");
             state.setStatus(ServiceHealthStatus.ERROR);
-            state.setLastMessage("Start failed: " + firstNonBlank(startResult.error(), startResult.output(), "Unknown error"));
+            state.setLastMessage("Start failed: " + reason);
             log.error("Start failed for service {}. exitCode={}, error={}, output={}",
                     service.getName(), startResult.exitCode(), startResult.error(), startResult.output());
+            notifyStartFailure(service, state, reason);
         }
     }
 
     private void start(MonitoredService service) {
         log.warn("Starting service {}", service.getName());
+        ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
+        notifyRestartAttempt(service, state);
 
         CommandExecutor.CommandResult startResult = executeServiceCommand(
                 service,
@@ -236,17 +253,54 @@ public class ServiceMonitor {
                 monitorProperties.getCommand().getStartTimeout()
         );
 
-        ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
         if (startResult.success()) {
             recordSuccessfulServiceAction(state, "Start command executed successfully");
             log.info("Start command executed for service {}. Start output: {}",
                     service.getName(), startResult.output());
         } else {
+            String reason = firstNonBlank(startResult.error(), startResult.output(), "Unknown error");
             state.setStatus(ServiceHealthStatus.ERROR);
-            state.setLastMessage("Start failed: " + firstNonBlank(startResult.error(), startResult.output(), "Unknown error"));
+            state.setLastMessage("Start failed: " + reason);
             log.error("Start failed for service {}. exitCode={}, error={}, output={}",
                     service.getName(), startResult.exitCode(), startResult.error(), startResult.output());
+            notifyStartFailure(service, state, reason);
         }
+    }
+
+    /**
+     * Sends a recovery attempt alert unless a failing streak was already reported.
+     *
+     * <p>When the start command keeps failing, the monitor retries it every
+     * cycle; suppressing repeated attempt alerts keeps the chat at one
+     * attempt/failure pair per streak instead of two messages per cycle.
+     *
+     * @param service service being started or restarted
+     * @param state runtime state holding history and deduplication flags
+     */
+    private void notifyRestartAttempt(MonitoredService service, ServiceState state) {
+        if (state.isStartFailureAlertSent()) {
+            return;
+        }
+        chatNotifier.restartAttempt(service, state.getRestartHistory().size() + 1);
+    }
+
+    /**
+     * Sends a start/restart failure alert once per failure streak.
+     *
+     * <p>Failed start commands are retried by the regular monitoring cycle, so
+     * without deduplication the chat would receive the same alert every cycle.
+     * The flag is reset by the next successful command or healthy check.
+     *
+     * @param service service whose recovery command failed
+     * @param state runtime state holding the deduplication flag
+     * @param reason command failure description
+     */
+    private void notifyStartFailure(MonitoredService service, ServiceState state, String reason) {
+        if (state.isStartFailureAlertSent()) {
+            return;
+        }
+        chatNotifier.restartFailed(service, reason);
+        state.setStartFailureAlertSent(true);
     }
 
     /**
@@ -265,22 +319,22 @@ public class ServiceMonitor {
         ServiceCheckResult checkResult = inspectService(service, state);
 
         if (!checkResult.processRunning()) {
-            markUnhealthy(state, checkResult);
+            markUnhealthy(service, state, checkResult);
             start(service);
             return;
         }
 
         if (!checkResult.healthCheckEnabled()) {
-            markHealthy(state, "Restart skipped: health-check is not configured");
+            markHealthy(service, state, "Restart skipped: health-check is not configured");
             return;
         }
 
         if (checkResult.healthCheckPassed()) {
-            markHealthy(state, "Restart skipped: health-check is healthy");
+            markHealthy(service, state, "Restart skipped: health-check is healthy");
             return;
         }
 
-        markUnhealthy(state, checkResult);
+        markUnhealthy(service, state, checkResult);
         restart(service);
     }
 
@@ -346,6 +400,10 @@ public class ServiceMonitor {
     /**
      * Marks a service as failed because the monitor itself hit an error.
      *
+     * <p>The chat alert shares the deduplication flag with regular down alerts,
+     * so a persistent infrastructure problem produces one message per episode
+     * instead of one message per monitoring cycle.
+     *
      * @param service service whose check failed
      * @param message human-readable failure message
      */
@@ -358,6 +416,11 @@ public class ServiceMonitor {
         state.setHealthCheckEnabled(hasHealthCheck(service));
         state.setHealthCheckPassed(false);
         state.setLastMessage(message);
+
+        if (!state.isDownAlertSent()) {
+            chatNotifier.monitoringError(service, message);
+            state.setDownAlertSent(true);
+        }
     }
 
     /**
@@ -420,18 +483,48 @@ public class ServiceMonitor {
         return new ServiceCheckResult(processRunning, healthCheckEnabled, healthCheckEnabled && healthy);
     }
 
-    private void markHealthy(ServiceState state, String message) {
+    /**
+     * Marks a service healthy and reports recovery to the chat when needed.
+     *
+     * <p>The recovery message is sent only when the current down episode was
+     * already reported, so the chat always sees a matching down/recovered pair.
+     *
+     * @param service checked service
+     * @param state runtime state to update
+     * @param message human-readable status message
+     */
+    private void markHealthy(MonitoredService service, ServiceState state, String message) {
+        boolean problemReported = state.isDownAlertSent();
         state.setStatus(ServiceHealthStatus.UP);
         state.setLastMessage(message);
+        state.setDownAlertSent(false);
+        state.setStartFailureAlertSent(false);
+        state.setRestartLimitAlertSent(false);
+
+        if (problemReported) {
+            chatNotifier.serviceRecovered(service);
+        }
     }
 
-    private void markUnhealthy(ServiceState state, ServiceCheckResult checkResult) {
+    /**
+     * Marks a service unhealthy and reports the failure to the chat once.
+     *
+     * @param service checked service
+     * @param state runtime state to update
+     * @param checkResult outcome of the latest availability check
+     */
+    private void markUnhealthy(MonitoredService service, ServiceState state, ServiceCheckResult checkResult) {
         state.setStatus(ServiceHealthStatus.DOWN);
         state.setLastMessage(buildUnhealthyMessage(
                 checkResult.processRunning(),
                 checkResult.healthCheckEnabled(),
                 checkResult.healthCheckPassed()
         ));
+
+        if (!state.isDownAlertSent()) {
+            chatNotifier.serviceDown(service, state.getLastMessage());
+            state.setDownAlertSent(true);
+        }
     }
 
     private void recordSuccessfulServiceAction(ServiceState state, String message) {
@@ -440,6 +533,7 @@ public class ServiceMonitor {
         state.getRestartHistory().addLast(now);
         state.setStatus(ServiceHealthStatus.RESTARTING);
         state.setLastMessage(message);
+        state.setStartFailureAlertSent(false);
     }
 
     private Long resolveAndPersistPid(MonitoredService service,
@@ -500,5 +594,14 @@ public class ServiceMonitor {
         private boolean serviceHealthy() {
             return processRunning && (!healthCheckEnabled || healthCheckPassed);
         }
+    }
+
+    /**
+     * Решение recovery-политики для одного цикла проверки.
+     *
+     * @param allowed {@code true}, если recovery-действие сейчас разрешено
+     * @param windowExhausted {@code true}, если лимит рестартов внутри окна исчерпан
+     */
+    private record RecoveryPolicyDecision(boolean allowed, boolean windowExhausted) {
     }
 }

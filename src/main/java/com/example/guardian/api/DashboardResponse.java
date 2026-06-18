@@ -8,6 +8,7 @@ import java.util.List;
  * Aggregated payload returned by the dashboard endpoint.
  *
  * @param summary counters grouped by service health status
+ * @param notifications current state of the chat notification feature
  * @param groups all groups available for dashboard filtering
  * @param services dashboard rows for the selected services
  */
@@ -15,6 +16,9 @@ import java.util.List;
 public record DashboardResponse(
         @Schema(description = "Counters grouped by current service health status.")
         DashboardSummaryResponse summary,
+
+        @Schema(description = "Current state of the chat notification feature.")
+        NotificationStatusResponse notifications,
 
         @Schema(description = "All configured groups available for dashboard filtering.")
         List<GroupResponse> groups,

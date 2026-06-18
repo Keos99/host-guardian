@@ -4,6 +4,7 @@ const state = {
     hosts: [],
     groups: [],
     dashboard: null,
+    notifications: {featureEnabled: false, globalEnabled: false},
     activeTab: "dashboard",
     dashboardRefreshInFlight: null,
     dashboardRefreshTimerId: null,
@@ -45,6 +46,9 @@ function bindEvents() {
     document.getElementById("hostConnectionMode").addEventListener("change", updateHostConnectionModeFields);
     document.getElementById("serviceManualRestartEnabled").addEventListener("change", updateRestartCommandMode);
     document.getElementById("tabSwitchButton").addEventListener("click", toggleActiveTab);
+    document.getElementById("toggleNotificationsButton").addEventListener("click", (event) => {
+        runWithButtonBusy(event.currentTarget, () => toggleGlobalNotifications()).catch(handleError);
+    });
 
     document.getElementById("servicesTableBody").addEventListener("click", (event) => onServicesTableClick(event).catch(handleError));
     document.getElementById("hostsTableBody").addEventListener("click", (event) => onHostsTableClick(event).catch(handleError));
@@ -120,9 +124,28 @@ async function loadDashboard() {
     }
 
     state.dashboard = dashboard;
+    state.notifications = dashboard.notifications ?? {featureEnabled: false, globalEnabled: false};
+    updateNotificationControls();
     renderSummary(state.dashboard.summary);
     renderServicesTable(state.dashboard.services);
     updateTabViewportHeight();
+}
+
+async function toggleGlobalNotifications() {
+    const enabled = !state.notifications.globalEnabled;
+    state.notifications = await requestJson(`/api/notifications?enabled=${String(enabled)}`, {method: "PATCH"});
+    updateNotificationControls();
+    showToast(enabled ? "Оповещения в чат включены." : "Оповещения в чат отключены.");
+    await refreshDashboard();
+}
+
+function updateNotificationControls() {
+    const featureEnabled = state.notifications.featureEnabled;
+    const button = document.getElementById("toggleNotificationsButton");
+    button.classList.toggle("hidden", !featureEnabled);
+    button.classList.toggle("notifications-off", !state.notifications.globalEnabled);
+    button.textContent = state.notifications.globalEnabled ? "Оповещения: вкл" : "Оповещения: выкл";
+    document.getElementById("serviceNotificationsField").classList.toggle("hidden", !featureEnabled);
 }
 
 function initializeTabs() {
@@ -240,7 +263,7 @@ function renderServicesTable(services) {
             <td>
                 <div class="service-cell">
                     <strong>${escapeHtml(service.name)}</strong>
-                    <small>${escapeHtml(service.monitoringEnabled ? "monitoring enabled" : "monitoring paused")}</small>
+                    <small>${escapeHtml(buildServiceFlagsLabel(service))}</small>
                 </div>
             </td>
             <td>${escapeHtml(service.hostName)}<br><small>${escapeHtml(service.hostAddress)}</small></td>
@@ -259,6 +282,12 @@ function renderServicesTable(services) {
                         label: service.monitoringEnabled ? "Пауза" : "Включить",
                         attributes: `data-enabled="${service.monitoringEnabled}"`
                     },
+                    ...(state.notifications.featureEnabled ? [{
+                        action: "toggle-notifications",
+                        id: service.id,
+                        label: service.notificationsEnabled ? "Откл. оповещения" : "Вкл. оповещения",
+                        attributes: `data-enabled="${service.notificationsEnabled}"`
+                    }] : []),
                     {action: "restart", id: service.id, label: "Restart"},
                     {action: "check", id: service.id, label: "Check"},
                     {action: "edit-service", id: service.id, label: "Edit"},
@@ -268,6 +297,14 @@ function renderServicesTable(services) {
         </tr>
     `).join("");
     restoreOpenActionMenuPosition();
+}
+
+function buildServiceFlagsLabel(service) {
+    const flags = [service.monitoringEnabled ? "monitoring enabled" : "monitoring paused"];
+    if (state.notifications.featureEnabled && !service.notificationsEnabled) {
+        flags.push("alerts off");
+    }
+    return flags.join(" · ");
 }
 
 function renderHostsTable() {
@@ -469,6 +506,7 @@ async function submitServiceForm(event) {
             restartWindowSeconds: Number(document.getElementById("serviceRestartWindowSeconds").value),
             maxRestartsInWindow: Number(document.getElementById("serviceMaxRestartsInWindow").value),
             monitoringEnabled: document.getElementById("serviceMonitoringEnabled").checked,
+            notificationsEnabled: document.getElementById("serviceNotificationsEnabled").checked,
             description: document.getElementById("serviceDescription").value || null
         };
 
@@ -570,6 +608,17 @@ async function handleServiceAction(button) {
             const enabled = button.dataset.enabled === "true";
             await requestJson(`/api/services/${id}/monitoring?enabled=${String(!enabled)}`, {method: "PATCH"});
             showToast(enabled ? "Мониторинг приостановлен." : "Мониторинг включен.");
+            await refreshDashboard();
+            closeActionMenus();
+        });
+        return;
+    }
+
+    if (action === "toggle-notifications") {
+        await runWithButtonBusy(button, async () => {
+            const enabled = button.dataset.enabled === "true";
+            await requestJson(`/api/services/${id}/notifications?enabled=${String(!enabled)}`, {method: "PATCH"});
+            showToast(enabled ? "Оповещения сервиса отключены." : "Оповещения сервиса включены.");
             await refreshDashboard();
             closeActionMenus();
         });
@@ -758,6 +807,7 @@ function editService(id) {
             document.getElementById("serviceRestartWindowSeconds").value = fullService.restartWindowSeconds;
             document.getElementById("serviceMaxRestartsInWindow").value = fullService.maxRestartsInWindow;
             document.getElementById("serviceMonitoringEnabled").checked = fullService.monitoringEnabled;
+            document.getElementById("serviceNotificationsEnabled").checked = fullService.notificationsEnabled;
             document.getElementById("serviceDescription").value = fullService.description ?? "";
             updateRestartCommandMode();
             setActiveTab("configuration");
@@ -802,6 +852,7 @@ function resetServiceForm() {
     document.getElementById("serviceForm").reset();
     document.getElementById("serviceId").value = "";
     document.getElementById("serviceMonitoringEnabled").checked = true;
+    document.getElementById("serviceNotificationsEnabled").checked = true;
     document.getElementById("serviceManualRestartEnabled").checked = false;
     document.getElementById("serviceHealthTimeoutSeconds").value = 3;
     document.getElementById("serviceRestartCooldownSeconds").value = 60;

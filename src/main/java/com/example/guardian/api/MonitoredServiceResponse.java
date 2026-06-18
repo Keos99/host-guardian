@@ -26,6 +26,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param restartWindowSeconds rolling restart window size in seconds
  * @param maxRestartsInWindow maximum allowed restarts in the rolling window
  * @param monitoringEnabled whether automatic monitoring is enabled
+ * @param notificationsEnabled whether chat notifications are enabled
  * @param description optional service description
  */
 @Schema(description = "Configured monitored service with resolved host and group details.")
@@ -89,6 +90,9 @@ public record MonitoredServiceResponse(
 
         @Schema(description = "Whether automatic monitoring is enabled.", example = "true")
         boolean monitoringEnabled,
+
+        @Schema(description = "Whether chat notifications are enabled.", example = "true")
+        boolean notificationsEnabled,
 
         @Schema(description = "Optional service description.", example = "Main billing backend process.", nullable = true)
         String description

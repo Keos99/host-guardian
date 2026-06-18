@@ -75,6 +75,7 @@ class ModelTest {
         service.setRestartWindowSeconds(700);
         service.setMaxRestartsInWindow(5);
         service.setMonitoringEnabled(false);
+        service.setNotificationsEnabled(false);
         service.setDescription("Service");
 
         assertThat(service.getId()).isEqualTo(3L);
@@ -93,6 +94,7 @@ class ModelTest {
         assertThat(service.getRestartWindowSeconds()).isEqualTo(700);
         assertThat(service.getMaxRestartsInWindow()).isEqualTo(5);
         assertThat(service.isMonitoringEnabled()).isFalse();
+        assertThat(service.isNotificationsEnabled()).isFalse();
         assertThat(service.getDescription()).isEqualTo("Service");
         assertThat(service.getHealthTimeout()).hasSeconds(4);
         assertThat(service.getRestartCooldown()).hasSeconds(70);
@@ -128,6 +130,39 @@ class ModelTest {
             assertThat(sql).contains("restart_command varchar(4096) not null");
             assertThat(sql).contains("start_command varchar(4096)");
         }
+    }
+
+    @Test
+    void newMonitoredServiceHasNotificationsEnabledByDefault() {
+        assertThat(new MonitoredService().isNotificationsEnabled()).isTrue();
+    }
+
+    @Test
+    void appSettingStoresKeyAndValue() {
+        AppSetting setting = new AppSetting();
+
+        setting.setKey("notifications.global-enabled");
+        setting.setValue("false");
+
+        assertThat(setting.getKey()).isEqualTo("notifications.global-enabled");
+        assertThat(setting.getValue()).isEqualTo("false");
+    }
+
+    @Test
+    void serviceStateTracksAlertDeduplicationFlags() {
+        ServiceState state = new ServiceState();
+
+        assertThat(state.isDownAlertSent()).isFalse();
+        assertThat(state.isStartFailureAlertSent()).isFalse();
+        assertThat(state.isRestartLimitAlertSent()).isFalse();
+
+        state.setDownAlertSent(true);
+        state.setStartFailureAlertSent(true);
+        state.setRestartLimitAlertSent(true);
+
+        assertThat(state.isDownAlertSent()).isTrue();
+        assertThat(state.isStartFailureAlertSent()).isTrue();
+        assertThat(state.isRestartLimitAlertSent()).isTrue();
     }
 
     @Test

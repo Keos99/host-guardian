@@ -5,8 +5,11 @@ import com.example.guardian.api.DashboardResponse;
 import com.example.guardian.api.DashboardServiceResponse;
 import com.example.guardian.api.DashboardSummaryResponse;
 import com.example.guardian.api.GroupResponse;
+import com.example.guardian.api.NotificationStatusResponse;
 import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
+import com.example.guardian.notification.NotificationProperties;
+import com.example.guardian.notification.NotificationSettingsService;
 import com.example.guardian.service.ConfigurationService;
 import com.example.guardian.service.ServiceMonitor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +40,8 @@ public class DashboardController {
     private final ConfigurationService configurationService;
     private final ServiceMonitor serviceMonitor;
     private final ApiMapper apiMapper;
+    private final NotificationProperties notificationProperties;
+    private final NotificationSettingsService notificationSettings;
 
     /**
      * Creates a dashboard controller with configuration and runtime data sources.
@@ -44,13 +49,19 @@ public class DashboardController {
      * @param configurationService service used to load persisted configuration
      * @param serviceMonitor service used to read current runtime snapshots
      * @param apiMapper mapper that converts entities into response DTOs
+     * @param notificationProperties notification feature configuration
+     * @param notificationSettings runtime global notification switch storage
      */
     public DashboardController(ConfigurationService configurationService,
                                ServiceMonitor serviceMonitor,
-                               ApiMapper apiMapper) {
+                               ApiMapper apiMapper,
+                               NotificationProperties notificationProperties,
+                               NotificationSettingsService notificationSettings) {
         this.configurationService = configurationService;
         this.serviceMonitor = serviceMonitor;
         this.apiMapper = apiMapper;
+        this.notificationProperties = notificationProperties;
+        this.notificationSettings = notificationSettings;
     }
 
     /**
@@ -102,7 +113,12 @@ public class DashboardController {
                 .map(apiMapper::toGroupResponse)
                 .toList();
 
-        return new DashboardResponse(buildSummary(services), groups, services);
+        NotificationStatusResponse notifications = new NotificationStatusResponse(
+                notificationProperties.isEnabled(),
+                notificationSettings.isGlobalEnabled()
+        );
+
+        return new DashboardResponse(buildSummary(services), notifications, groups, services);
     }
 
     /**

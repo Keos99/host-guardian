@@ -26,6 +26,8 @@
             <div class="button-row">
                 <button id="refreshDashboardButton" class="button button-primary" type="button">Обновить дашборд</button>
                 <button id="clearGroupFilterButton" class="button button-secondary" type="button">Сбросить фильтр</button>
+                <button id="toggleNotificationsButton" class="button button-secondary hidden" type="button"
+                        title="Глобальный выключатель оповещений в чат">Оповещения: вкл</button>
             </div>
         </div>
     </header>
@@ -149,6 +151,11 @@
                     <label class="field field-checkbox">
                         <span>Мониторинг активен</span>
                         <input id="serviceMonitoringEnabled" type="checkbox" checked>
+                    </label>
+
+                    <label class="field field-checkbox" id="serviceNotificationsField">
+                        <span>Оповещения в чат</span>
+                        <input id="serviceNotificationsEnabled" type="checkbox" checked>
                     </label>
 
                     <label class="field field-wide">

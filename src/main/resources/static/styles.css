@@ -382,6 +382,11 @@ textarea:disabled {
     color: var(--ink);
 }
 
+.button-secondary.notifications-off {
+    background: rgba(180, 35, 24, 0.12);
+    color: var(--danger);
+}
+
 .mini-button {
     padding: 8px 12px;
     background: rgba(14, 124, 134, 0.1);
