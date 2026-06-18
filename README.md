@@ -291,6 +291,7 @@ notification:
 
 monitor:
   interval: 30s
+  concurrency: 8 # how many hosts are checked in parallel within one cycle
   ssh:
     provider: system # system | jsch
     strict-host-key-checking: false
@@ -515,6 +516,19 @@ nohup java -jar order-worker.jar >> /var/log/order-worker.log 2>&1 &
 ```
 
 - Health URL: `http://127.0.0.1:8092/actuator/health`
+
+---
+
+## Performance at Scale
+
+The check-and-recovery cycle is optimized for tens or hundreds of services:
+
+- **One process snapshot per host.** Instead of a separate `pgrep` per service, the monitor takes a single process listing (`ps -ww -eo pid=,args=`) once per host and matches `processMatch` locally. No separate PID liveness probe is needed — the snapshot only contains live processes.
+- **Batched health checks.** HTTP checks for all services of a remote host run in one script with parallel `curl` calls, so total time is bounded by the slowest endpoint rather than their sum.
+- **SSH connection reuse.** An SSH session is opened once per host and reused across commands and cycles (`JschSessionPool`, provider `jsch`) with keepalive and reconnect-on-failure — the full SSH handshake is no longer paid per command. The `jsch` provider is recommended for large remote fleets.
+- **Parallel host checks.** Hosts are independent and checked in parallel through a thread pool sized by `monitor.concurrency`. Work within a single host stays sequential, preserving recovery action ordering.
+
+The result is roughly two commands per host per cycle (process snapshot + batched health) over one reused connection — regardless of how many services run on the host.
 
 ---
 

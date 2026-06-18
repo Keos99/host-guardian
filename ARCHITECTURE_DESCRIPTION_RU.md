@@ -36,7 +36,7 @@ Host Guardian представляет собой Spring Boot приложени
 | Регистрация групп сервисов | Пользователь создает логические группы для фильтрации и организации dashboard. |
 | Регистрация мониторируемого сервиса | Пользователь задает имя, хост, группу, шаблон поиска процесса, команды, health URL и restart-политику. |
 | Периодический мониторинг | Система по расписанию проверяет все включенные сервисы. |
-| Проверка процесса | Система ищет процесс на целевом хосте через `pgrep -af`, сохраняет PID и проверяет его живость. |
+| Проверка процесса | Система один раз снимает список процессов хоста (`ps -ww -eo pid=,args=`), локально матчит каждый сервис и сохраняет PID. |
 | HTTP health-check | Если задан `healthUrl`, система проверяет прикладную готовность сервиса через HTTP. |
 | Автоматический start recovery | Если процесс отсутствует и policy разрешает действие, система выполняет только `startCommand`. |
 | Ручная проверка | Оператор запускает немедленную проверку одного сервиса. |
@@ -72,7 +72,7 @@ Host Guardian представляет собой Spring Boot приложени
 
 | Категория | Ограничение | Описание |
 |---|---|---|
-| Технические | Linux target hosts | Мониторинг процессов опирается на `bash`, `pgrep`, `curl` и shell-команды, поэтому целевые хосты предполагаются Linux-окружениями. |
+| Технические | Linux target hosts | Мониторинг процессов опирается на `bash`, `ps`, `curl` и shell-команды, поэтому целевые хосты предполагаются Linux-окружениями. |
 | Технические | Java/Spring Boot | Основной backend реализован на Java 17 и Spring Boot 3.2.5. |
 | Инфраструктурные | H2/PostgreSQL | Локально используется file-based H2, для более устойчивого окружения предусмотрен PostgreSQL profile. |
 | Инфраструктурные | LOCAL/SSH execution | Команды выполняются либо локально на хосте Host Guardian, либо удаленно через SSH. |
@@ -115,7 +115,7 @@ Host Guardian находится между операционной коман�
 |---|---|---|---|
 | Web dashboard | HTTP/REST | Действия пользователя, формы конфигурации, фильтры | Сводка статусов, списки хостов/групп/сервисов, результат действий |
 | REST API | JSON over HTTP | CRUD-запросы, manual check/restart, фильтрация | DTO ответов, HTTP status, `ProblemDetail` при ошибках |
-| Target host LOCAL | Shell command | `pgrep`, PID-check, `curl`, start/restart command | Exit code, stdout, stderr |
+| Target host LOCAL | Shell command | `ps`-снимок процессов, `curl`, start/restart command | Exit code, stdout, stderr |
 | Target host SSH | SSH command | Те же команды, но на удаленной машине | Exit code, stdout, stderr, ошибки подключения |
 | H2/PostgreSQL | JDBC/JPA | Чтение и запись конфигурации | Persistent state конфигурации |
 | Chat webhook | HTTP POST (JSON) | Событие мониторинга: `peer`, `status`, `message`, `url` | HTTP-ответ чат-платформы; ошибки доставки логируются и не влияют на мониторинг |
@@ -153,6 +153,7 @@ flowchart LR
     NotifSettings --> Repos
     Repos --> Db[("H2 / PostgreSQL")]
 
+    Monitor --> Executor["monitoringExecutor (parallel hosts)"]
     Monitor --> Process["LinuxProcessInspector"]
     Monitor --> Health["HttpHealthChecker"]
     Monitor --> Shell["HostShellExecutor"]
@@ -167,7 +168,9 @@ flowchart LR
     Health --> Shell
     Shell --> Local["LOCAL shell"]
     Shell --> SshProvider["SshCommandProvider"]
-    SshProvider --> Remote["Remote Linux host"]
+    SshProvider --> Pool["JschSessionPool (reused sessions)"]
+    Pool --> Remote["Remote Linux host"]
+    SshProvider --> Remote
 
     Api --> OpenApi["OpenAPI / Swagger UI"]
 ```
@@ -181,11 +184,14 @@ flowchart LR
 | ConfigurationService | Правила создания, обновления, удаления и чтения хостов, групп и сервисов. | REST controllers. | Spring Data repositories. |
 | ServiceMonitor | Центральная логика проверки сервисов, вычисления статуса и запуска recovery. | Scheduler, REST manual actions. | Repositories, process inspector, health checker, shell executor. |
 | MonitoringScheduler | Периодический запуск `ServiceMonitor.checkAll()` по `monitor.interval`. | Spring scheduling. | ServiceMonitor. |
-| LinuxProcessInspector | Поиск процесса по `pgrep -af`, сохранение/проверка PID, остановка процесса при restart-flow. | ServiceMonitor. | HostShellExecutor. |
-| HttpHealthChecker | Проверка HTTP health endpoint с учетом target host. | ServiceMonitor. | HostShellExecutor / `curl`. |
+| LinuxProcessInspector | Снимок процессов хоста (`ps -ww -eo`) и остановка процесса при restart-flow. | ServiceMonitor. | HostShellExecutor. |
+| ProcessSnapshot | Иммутабельный снимок процессов хоста; локально матчит `processMatch` каждого сервиса (regex с fallback на подстроку). | ServiceMonitor. | — (in-memory). |
+| HttpHealthChecker | Пакетная HTTP-проверка всех сервисов хоста: один параллельный `curl`-скрипт на удаленном хосте, RestTemplate — на локальном. | ServiceMonitor. | HostShellExecutor / `curl`. |
 | HostShellExecutor | Единая точка выполнения команд на LOCAL или SSH-хосте. | Process inspector, health checker, monitor. | CommandExecutor, SshCommandProvider. |
 | CommandExecutor | Низкоуровневое выполнение локальных shell-команд с timeout. | HostShellExecutor. | ОС хоста Host Guardian. |
-| SshCommandProvider | Выполнение удаленных команд через `system` SSH или JSch. | HostShellExecutor. | Удаленный Linux-хост. |
+| SshCommandProvider | Выполнение удаленных команд через `system` SSH или JSch. | HostShellExecutor. | Удаленный Linux-хост, JschSessionPool. |
+| JschSessionPool | Кэш долгоживущих SSH-сессий по хосту с keepalive и реконнектом; убирает SSH-хендшейк на каждую команду. | JschSshCommandProvider. | JschFacade, удаленный хост. |
+| monitoringExecutor | Пул потоков (`monitor.concurrency`) для параллельной проверки независимых хостов в одном цикле. | ServiceMonitor. | — (управление потоками). |
 | ChatNotifier | Подготовка текстов оповещений, гейтинг по трем переключателям и безопасная асинхронная передача сообщений провайдеру; слушает `ApplicationReadyEvent` для стартового сообщения. | ServiceMonitor, ConfigurationService, Spring events. | NotificationSettingsService, ChatProvider, выделенный поток `chat-notifier`. |
 | WebhookChatProvider | Реализация `ChatProvider`: POST JSON-payload на настроенный webhook с таймаутами и опциональным auth-заголовком; при пустом URL — log-only режим. | ChatNotifier (через интерфейс `ChatProvider`). | Чат-платформа по HTTP. |
 | NotificationSettingsService | Хранение глобального runtime-переключателя оповещений в таблице `app_setting` с in-memory кэшем. | ChatNotifier, NotificationController, DashboardController. | AppSettingRepository. |
@@ -238,7 +244,7 @@ flowchart LR
 
 | Сценарий | Описание | Список компонентов |
 |---|---|---|
-| Периодический мониторинг | Scheduler запускает проверку всех сервисов; отключенные сервисы помечаются как `PAUSED`, остальные проходят process/health checks. | `MonitoringScheduler`, `ServiceMonitor`, repositories, `LinuxProcessInspector`, `HttpHealthChecker`, `HostShellExecutor`. |
+| Периодический мониторинг | Scheduler запускает цикл; отключенные сервисы помечаются `PAUSED`, остальные группируются по хосту; хосты проверяются параллельно, на каждый хост — один снимок процессов и один пакетный health-check. | `MonitoringScheduler`, `ServiceMonitor`, `monitoringExecutor`, repositories, `LinuxProcessInspector`, `ProcessSnapshot`, `HttpHealthChecker`, `HostShellExecutor`. |
 | Автоматический start recovery | Если процесс отсутствует, а cooldown/window policy разрешает действие, выполняется `startCommand`. | `ServiceMonitor`, `HostShellExecutor`, `CommandExecutor` или `SshCommandProvider`, target host. |
 | Ручная проверка | Оператор нажимает check; система сразу проверяет один сервис и обновляет runtime state. | Dashboard, `MonitoredServiceController`, `ServiceMonitor`. |
 | Ручной restart | Оператор нажимает restart; если процесс отсутствует, выполняется start; если health-check отсутствует или успешен, restart не выполняется; если health-check падает, выполняется restart/stop + start. | Dashboard, `MonitoredServiceController`, `ServiceMonitor`, `LinuxProcessInspector`, `HostShellExecutor`. |
@@ -254,51 +260,36 @@ sequenceDiagram
     participant S as MonitoringScheduler
     participant M as ServiceMonitor
     participant R as MonitoredServiceRepository
+    participant X as monitoringExecutor
     participant P as LinuxProcessInspector
     participant H as HttpHealthChecker
     participant E as HostShellExecutor
     participant T as Target host
-    participant N as ChatNotifier
 
     S->>M: checkAll()
     M->>R: findAllByOrderByNameAsc()
-    R-->>M: services
-    loop each enabled service
-        M->>P: findFirst(host, processMatch)
-        P->>E: execute pgrep command
-        E->>T: shell/ssh command
-        T-->>E: pid/output
+    R-->>M: services (host fetched)
+    M->>M: skip PAUSED, group enabled services by host
+    M->>X: invokeAll(one task per host)
+    par for each host in parallel
+        X->>M: checkHost(hostServices)
+        M->>P: snapshot(host)
+        P->>E: ps -ww -eo pid=,args= (one command)
+        E->>T: reused SSH session / local shell
+        T-->>E: process list
         E-->>P: CommandResult
-        P-->>M: ProcessInfo
-        M->>P: isPidRunning(host, pid)
-        alt healthUrl configured
-            M->>H: isHealthy(host, healthUrl, timeout)
-            H->>E: execute curl command
-            E->>T: shell/ssh command
-            T-->>E: HTTP result
+        P-->>M: ProcessSnapshot
+        opt services with healthUrl
+            M->>H: batchHealthy(host, services)
+            H->>E: one parallel curl script
+            E->>T: reused SSH session
+            T-->>E: "id 0|1" lines
             E-->>H: CommandResult
-            H-->>M: true/false
+            H-->>M: Map serviceId -> healthy
         end
-        M->>M: update ServiceState
-        opt unhealthy first time in episode
-            M->>N: serviceDown(service, reason)
-        end
-        alt process missing and policy allows
-            M->>N: restartAttempt(service, attempt)
-            M->>E: execute startCommand
-            E->>T: shell/ssh command
-            T-->>E: CommandResult
-            E-->>M: result
-            alt start failed
-                M->>N: restartFailed(service, reason) once per streak
-            else started
-                M->>M: record recovery action
-            end
-        else restart window exhausted
-            M->>N: restartLimitReached(service) once per episode
-        end
-        opt healthy again after reported problem
-            M->>N: serviceRecovered(service)
+        loop each service on host (sequential)
+            M->>M: match snapshot + read health, update ServiceState
+            M->>M: recovery / chat notifications (deduplicated)
         end
     end
 ```
@@ -398,6 +389,7 @@ flowchart TB
 | ADR-005. Встроенный dashboard вместо отдельного frontend | Контекст: UI нужен для операционных задач, а не как публичный продукт. Альтернативы: SPA с отдельной сборкой и деплоем. Решение: статические HTML/CSS/JS ресурсы внутри Spring Boot. Почему так: проще поставка, меньше инфраструктуры, достаточно для MVP. |
 | ADR-006. Оповещения через generic webhook с асинхронной отправкой и дедупликацией | Контекст: команде нужны оповещения о событиях мониторинга в корпоративном чате; в legacy-проекте существовал жестко зашитый SberChat-клиент, отправлявший сообщения синхронно и без защиты от повторов. Альтернативы: перенос SberChat-клиента как есть; синхронная отправка из цикла мониторинга; отдельный notification-сервис. Решение: интерфейс `ChatProvider` с реализацией `WebhookChatProvider` (JSON-payload `peer`/`status`/`message`/`url`, совместимый со старым эндпоинтом), отправка в выделенном однопоточном executor, флаги дедупликации в `ServiceState`, log-only режим при пустом URL. Почему так: транспорт заменяем без изменения ядра; существующий корпоративный эндпоинт подключается одной настройкой; ошибки и задержки чата не влияют на мониторинг; один эпизод сбоя дает одну пару сообщений «упал/восстановился»; однопоточный executor сохраняет порядок сообщений. |
 | ADR-007. Трехуровневое отключение оповещений | Контекст: оповещения должны отключаться полностью (окружения без чата), временно (шумные работы) и точечно (отдельные сервисы). Альтернативы: один флаг в конфигурации; хранение всех флагов только в памяти. Решение: build-time флаг `notification.chat.enabled` в `application.yml` (скрывает UI и блокирует API), runtime-переключатель в таблице `app_setting` (переживает рестарт), флаг `notifications_enabled` на каждом сервисе. Почему так: каждый уровень закрывает свой сценарий эксплуатации; persistent-хранение runtime-переключателя исключает «тихое» включение после рестарта. |
+| ADR-008. Пакетная и параллельная проверка вместо последовательной по сервисам | Контекст: исходный цикл делал на каждый сервис отдельные `pgrep`, `kill -0` и `curl`, причем каждая SSH-команда открывала новое подключение, а сервисы проверялись строго последовательно — при сотнях сервисов цикл не укладывался в интервал. Альтернативы: только многопоточность (делит, но не убирает хендшейки и нагружает хост параллельными коннектами); вынос мониторинга в отдельный сервис; перевод сервисов под systemd/k8s. Решение: один снимок процессов на хост (`ps`) с локальным матчингом, один пакетный `curl`-скрипт на хост для health, пул переиспользуемых SSH-сессий (`jsch`) и параллельная проверка независимых хостов (`monitor.concurrency`); внутри хоста — последовательно. Почему так: убирается множитель «число сервисов», хендшейк платится один раз на хост, а параллелизм масштабирует по хостам без потери порядка recovery-действий и без смены архитектуры. Ограничение: переиспользование сессии работает только для провайдера `jsch`; матчинг `processMatch` переехал из `pgrep` в Java-regex (с fallback на подстроку). |
 
 ## 9. Требования к атрибутам качества
 
@@ -407,8 +399,8 @@ flowchart TB
 |---|---|
 | Доступность (Availability) | Dashboard и API должны быть доступны для просмотра состояния и ручных действий, пока работает Host Guardian. Отказ одного проверяемого сервиса не должен блокировать остальные проверки. |
 | Надежность (Reliability) | Проверки должны быть изолированы по сервисам; ошибки shell/SSH/HTTP должны переводиться в понятные статусы и сообщения. |
-| Производительность (Performance) | Сводка dashboard должна возвращаться быстро для ожидаемого числа хостов и сервисов; timeouts команд должны предотвращать зависание scheduler. |
-| Масштабируемость (Scalability) | Система должна поддерживать рост числа сервисов и хостов через БД и группировку, без изменения базовой модели. |
+| Производительность (Performance) | Сводка dashboard должна возвращаться быстро; цикл мониторинга должен укладываться в интервал при большом числе сервисов за счет одного снимка процессов и одного пакетного health-check на хост, переиспользования SSH-соединений и параллельной проверки хостов; timeouts команд предотвращают зависание цикла. |
+| Масштабируемость (Scalability) | Рост числа сервисов на хосте не увеличивает число удаленных вызовов (один снимок + один health-батч на хост); рост числа хостов поглощается параллелизмом `monitor.concurrency`. |
 | Безопасность (Security) | SSH-доступ должен быть ограничен, команды должны выполняться только из сохраненной конфигурации, секреты не должны выводиться в ответы API и логи. |
 | Поддерживаемость (Maintainability) | Код разделен по слоям, покрыт unit-тестами, миграции схемы управляются Flyway, API документируется OpenAPI. |
 | Расширяемость (Extensibility / Evolvability) | Возможность добавления новых каналов уведомлений (Telegram/Slack/email через реализации `ChatProvider`), аудита, RBAC, истории проверок, новых providers и maintenance windows без полной смены архитектуры. |
@@ -445,7 +437,7 @@ flowchart TB
 | Негарантированная доставка оповещений | Оповещения отправляются однократно без очереди и retry: при недоступном webhook сообщение фиксируется только в логе. Очередь backlog у однопоточного executor не ограничена по размеру. |
 | Один канал оповещений | Реализован один транспорт — HTTP webhook; Telegram/Slack/email потребуют новых реализаций `ChatProvider`. Эскалация и расписания дежурств отсутствуют. |
 | Сброс дедупликации при рестарте | Флаги дедупликации алертов живут в памяти: после рестарта Host Guardian продолжающийся инцидент породит повторное сообщение о падении. |
-| Масштаб scheduler | При большом числе сервисов последовательные проверки и shell/SSH timeouts могут увеличить длительность одного цикла. |
+| Масштаб scheduler | Цикл оптимизирован (батч на хост, пул SSH-сессий, параллелизм по хостам), но остается в одном экземпляре приложения: при очень большом числе хостов либо медленном отдельном хосте длительность цикла все еще ограничена `monitor.concurrency` и таймаутами команд. Переиспользование SSH-сессии доступно только для провайдера `jsch`; для `system` экономия ограничена сокращением числа команд. |
 | Нет production deployment spec | В репозитории нет полноценного Dockerfile/Kubernetes/systemd unit для самого Host Guardian. |
 
 ## 11. Словарь
@@ -455,7 +447,10 @@ flowchart TB
 | Host Guardian | Сервис мониторинга и восстановления процессов на Linux-хостах. |
 | Хост | Машина, на которой выполняются проверки и команды: локальная (`LOCAL`) или удаленная (`SSH`). |
 | Мониторируемый сервис | Прикладной процесс, состояние которого отслеживает Host Guardian. |
-| `processMatch` | Строка/шаблон для поиска процесса через `pgrep -af`. |
+| `processMatch` | Строка/шаблон, который матчится с командной строкой процесса в снимке `ps` (regex с fallback на подстроку). |
+| Снимок процессов (ProcessSnapshot) | Список процессов хоста, снятый одной командой `ps` за цикл и матчащийся локально для всех сервисов хоста. |
+| Пул SSH-сессий (JschSessionPool) | Кэш переиспользуемых SSH-сессий по хосту, убирающий SSH-хендшейк на каждую команду (провайдер `jsch`). |
+| `monitor.concurrency` | Степень параллелизма проверки хостов в одном цикле мониторинга. |
 | `healthUrl` | Опциональный HTTP endpoint, подтверждающий прикладную готовность сервиса. |
 | Start recovery | Автоматическое выполнение `startCommand`, когда процесс не найден и политика разрешает действие. |
 | Manual restart | Ручное действие оператора, которое выполняет проверенный restart-flow. |

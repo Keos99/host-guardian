@@ -3,6 +3,7 @@ package com.example.guardian.service;
 import com.example.guardian.TestFixtures;
 import com.example.guardian.config.MonitorProperties;
 import com.example.guardian.model.HostConfig;
+import com.example.guardian.model.MonitoredService;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -152,17 +154,20 @@ class CommandAndShellServicesTest {
     }
 
     @Test
-    void jschSshCommandProviderExecutesCommandThroughJschSession() throws Exception {
-        JschFacade jschFacade = mock(JschFacade.class);
+    void jschSshCommandProviderRunsCommandOnPooledSessionWithoutClosingIt() throws Exception {
+        JschSessionPool sessionPool = mock(JschSessionPool.class);
         MonitorProperties properties = monitorProperties();
         properties.getCommand().setSshConnectTimeout(Duration.ofSeconds(9));
-        JschSshCommandProvider provider = new JschSshCommandProvider(jschFacade, properties);
+        JschSshCommandProvider provider = new JschSshCommandProvider(sessionPool, properties);
         HostConfig host = TestFixtures.sshHost(1);
         Session session = mock(Session.class);
         ChannelExec channel = mock(ChannelExec.class);
         ByteArrayInputStream stdout = new ByteArrayInputStream("ok\n".getBytes(StandardCharsets.UTF_8));
 
-        when(jschFacade.openSession(host, properties.getSsh(), Duration.ofSeconds(9))).thenReturn(session);
+        when(sessionPool.withSession(eq(host), any())).thenAnswer(invocation -> {
+            JschSessionPool.SessionWork<?> work = invocation.getArgument(1);
+            return work.apply(session);
+        });
         when(session.openChannel("exec")).thenReturn(channel);
         when(channel.getInputStream()).thenReturn(stdout);
         when(channel.isClosed()).thenReturn(true);
@@ -181,11 +186,11 @@ class CommandAndShellServicesTest {
         verify(channel).setCommand("bash -lc 'echo '\"'\"'ok'\"'\"''");
         verify(channel).connect(9_000);
         verify(channel).disconnect();
-        verify(session).disconnect();
+        verify(session, never()).disconnect();
     }
 
     @Test
-    void jschFacadeConfiguresSessionAuthenticationAndHostChecking() throws Exception {
+    void jschFacadeConfiguresSessionAuthenticationKeepAliveAndHostChecking() throws Exception {
         JSch jsch = mock(JSch.class);
         Session session = mock(Session.class);
         MonitorProperties properties = monitorProperties();
@@ -199,45 +204,45 @@ class CommandAndShellServicesTest {
         assertThat(actual).isSameAs(session);
         verify(jsch).addIdentity("/home/deploy/.ssh/id_ed25519");
         verify(session).setConfig("StrictHostKeyChecking", "yes");
+        verify(session).setServerAliveInterval(15_000);
         verify(session).connect(6_000);
     }
 
     @Test
-    void linuxProcessInspectorReturnsTrueOnlyForSuccessfulNonBlankOutput() {
+    void linuxProcessInspectorSnapshotIsUnavailableForFailedOrBlankOutput() {
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
         LinuxProcessInspector inspector = new LinuxProcessInspector(hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
 
-        when(hostShellExecutor.execute(host, "pgrep -af \"api\\\"service\"", Duration.ofSeconds(5)))
+        when(hostShellExecutor.execute(host, "ps -ww -eo pid=,args=", Duration.ofSeconds(5)))
                 .thenReturn(new CommandExecutor.CommandResult(0, "123 api", null))
                 .thenReturn(new CommandExecutor.CommandResult(0, " ", null))
                 .thenReturn(new CommandExecutor.CommandResult(1, "", "missing"));
 
-        assertThat(inspector.isRunning(host, "api\"service")).isTrue();
-        assertThat(inspector.isRunning(host, "api\"service")).isFalse();
-        assertThat(inspector.isRunning(host, "api\"service")).isFalse();
+        assertThat(inspector.snapshot(host).findFirst("api")).isPresent();
+        assertThat(inspector.snapshot(host).isAvailable()).isFalse();
+        assertThat(inspector.snapshot(host).isAvailable()).isFalse();
     }
 
     @Test
-    void linuxProcessInspectorFindsFirstProcessAndChecksPidWithConfiguredTimeouts() {
+    void linuxProcessInspectorSnapshotParsesProcessesWithConfiguredTimeout() {
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
         MonitorProperties properties = monitorProperties();
         properties.getCommand().setProcessLookupTimeout(Duration.ofSeconds(7));
-        properties.getCommand().setPidCheckTimeout(Duration.ofSeconds(2));
         LinuxProcessInspector inspector = new LinuxProcessInspector(hostShellExecutor, properties);
         HostConfig host = TestFixtures.localHost(1);
 
-        when(hostShellExecutor.execute(host, "pgrep -af \"api.jar\"", Duration.ofSeconds(7)))
-                .thenReturn(new CommandExecutor.CommandResult(0, "1234 java -jar api.jar\n5678 grep api.jar", null));
-        when(hostShellExecutor.execute(host, "kill -0 1234", Duration.ofSeconds(2)))
-                .thenReturn(new CommandExecutor.CommandResult(0, "", null));
+        when(hostShellExecutor.execute(host, "ps -ww -eo pid=,args=", Duration.ofSeconds(7)))
+                .thenReturn(new CommandExecutor.CommandResult(0, "1234 java -jar api.jar\n5678 java -jar other.jar", null));
 
-        Optional<LinuxProcessInspector.ProcessInfo> process = inspector.findFirst(host, "api.jar");
+        ProcessSnapshot snapshot = inspector.snapshot(host);
+        Optional<LinuxProcessInspector.ProcessInfo> process = snapshot.findFirst("api\\.jar");
 
+        assertThat(snapshot.isAvailable()).isTrue();
         assertThat(process).isPresent();
         assertThat(process.orElseThrow().pid()).isEqualTo(1234L);
         assertThat(process.orElseThrow().commandLine()).isEqualTo("java -jar api.jar");
-        assertThat(inspector.isPidRunning(host, 1234L)).isTrue();
+        assertThat(snapshot.findFirst("nonexistent")).isEmpty();
     }
 
     @Test
@@ -266,52 +271,58 @@ class CommandAndShellServicesTest {
     }
 
     @Test
-    void httpHealthCheckerUsesRemoteCurlOnSshHost() {
+    void httpHealthCheckerBatchesRemoteChecksIntoOneScript() {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
         HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.sshHost(1);
-        Duration timeout = Duration.ofSeconds(3);
-        when(hostShellExecutor.execute(host,
-                "curl -fsS --max-time 3 'http://127.0.0.1:8080/health' > /dev/null",
-                timeout.plusSeconds(1)))
-                .thenReturn(new CommandExecutor.CommandResult(0, "", null));
+        MonitoredService first = healthService(101, "http://127.0.0.1:8080/health", 3);
+        MonitoredService second = healthService(102, "http://127.0.0.1:9090/health", 5);
 
-        assertThat(checker.isHealthy(host, "http://127.0.0.1:8080/health", timeout)).isTrue();
+        ArgumentCaptor<String> scriptCaptor = ArgumentCaptor.forClass(String.class);
+        when(hostShellExecutor.execute(eq(host), scriptCaptor.capture(), eq(Duration.ofSeconds(6))))
+                .thenReturn(new CommandExecutor.CommandResult(0, "101 1\n102 0", null));
+
+        Map<Long, Boolean> result = checker.batchHealthy(host, List.of(first, second));
+
+        assertThat(result).containsEntry(101L, true).containsEntry(102L, false);
+        assertThat(scriptCaptor.getValue())
+                .contains("curl -fsS --max-time")
+                .contains("__hg_check '101' '3' 'http://127.0.0.1:8080/health' &")
+                .contains("__hg_check '102' '5' 'http://127.0.0.1:9090/health' &")
+                .contains("wait");
     }
 
     @Test
-    void httpHealthCheckerUsesAtLeastOneSecondForRemoteCurl() {
+    void httpHealthCheckerReturnsAllFalseWhenRemoteScriptFails() {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
-        MonitorProperties properties = monitorProperties();
-        properties.getCommand().setHealthCommandExtraTimeout(Duration.ofSeconds(3));
-        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, properties);
+        HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.sshHost(1);
-        Duration timeout = Duration.ZERO;
-        when(hostShellExecutor.execute(host,
-                "curl -fsS --max-time 1 'http://service/health' > /dev/null",
-                timeout.plusSeconds(3)))
+        when(hostShellExecutor.execute(eq(host), any(), any()))
                 .thenReturn(new CommandExecutor.CommandResult(1, "", "failed"));
 
-        assertThat(checker.isHealthy(host, "http://service/health", timeout)).isFalse();
+        Map<Long, Boolean> result = checker.batchHealthy(host, List.of(healthService(101, "http://service/health", 3)));
+
+        assertThat(result).containsEntry(101L, false);
     }
 
     @Test
-    void httpHealthCheckerUsesRestTemplateForLocalHost() {
+    void httpHealthCheckerBatchesLocalChecksWithRestTemplate() {
         RestTemplateBuilder restTemplateBuilder = mock(RestTemplateBuilder.class);
         RestTemplate restTemplate = mock(RestTemplate.class);
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
         HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
-        Duration timeout = Duration.ofSeconds(2);
 
-        when(restTemplateBuilder.setConnectTimeout(timeout)).thenReturn(restTemplateBuilder);
-        when(restTemplateBuilder.setReadTimeout(timeout)).thenReturn(restTemplateBuilder);
+        when(restTemplateBuilder.setConnectTimeout(Duration.ofSeconds(2))).thenReturn(restTemplateBuilder);
+        when(restTemplateBuilder.setReadTimeout(Duration.ofSeconds(2))).thenReturn(restTemplateBuilder);
         when(restTemplateBuilder.build()).thenReturn(restTemplate);
         when(restTemplate.getForEntity("http://localhost/health", String.class)).thenReturn(ResponseEntity.ok("ok"));
 
-        assertThat(checker.isHealthy(host, "http://localhost/health", timeout)).isTrue();
+        Map<Long, Boolean> result = checker.batchHealthy(host, List.of(healthService(7, "http://localhost/health", 2)));
+
+        assertThat(result).containsEntry(7L, true);
     }
 
     @Test
@@ -321,14 +332,30 @@ class CommandAndShellServicesTest {
         HostShellExecutor hostShellExecutor = mock(HostShellExecutor.class);
         HttpHealthChecker checker = new HttpHealthChecker(restTemplateBuilder, hostShellExecutor, monitorProperties());
         HostConfig host = TestFixtures.localHost(1);
-        Duration timeout = Duration.ofSeconds(2);
 
-        when(restTemplateBuilder.setConnectTimeout(timeout)).thenReturn(restTemplateBuilder);
-        when(restTemplateBuilder.setReadTimeout(timeout)).thenReturn(restTemplateBuilder);
+        when(restTemplateBuilder.setConnectTimeout(Duration.ofSeconds(2))).thenReturn(restTemplateBuilder);
+        when(restTemplateBuilder.setReadTimeout(Duration.ofSeconds(2))).thenReturn(restTemplateBuilder);
         when(restTemplateBuilder.build()).thenReturn(restTemplate);
         when(restTemplate.getForEntity("http://localhost/health", String.class)).thenThrow(new IllegalStateException("down"));
 
-        assertThat(checker.isHealthy(host, "http://localhost/health", timeout)).isFalse();
+        Map<Long, Boolean> result = checker.batchHealthy(host, List.of(healthService(7, "http://localhost/health", 2)));
+
+        assertThat(result).containsEntry(7L, false);
+    }
+
+    @Test
+    void httpHealthCheckerReturnsEmptyMapWhenNoServicesHaveHealthUrl() {
+        HttpHealthChecker checker = new HttpHealthChecker(
+                mock(RestTemplateBuilder.class), mock(HostShellExecutor.class), monitorProperties());
+
+        assertThat(checker.batchHealthy(TestFixtures.sshHost(1), List.of())).isEmpty();
+    }
+
+    private MonitoredService healthService(long id, String url, long timeoutSeconds) {
+        MonitoredService service = TestFixtures.service(id, TestFixtures.localHost(1), null);
+        service.setHealthUrl(url);
+        service.setHealthTimeoutSeconds(timeoutSeconds);
+        return service;
     }
 
     private boolean isWindows() {

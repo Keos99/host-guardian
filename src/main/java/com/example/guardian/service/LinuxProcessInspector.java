@@ -5,10 +5,15 @@ import com.example.guardian.model.HostConfig;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 /**
- * Component for process lookup and process termination on Linux hosts.
+ * Component for process listing and process termination on Linux hosts.
+ *
+ * <p>Process discovery is performed once per host as a full snapshot
+ * ({@link #snapshot(HostConfig)}) and matched locally, rather than running a
+ * separate {@code pgrep} for every monitored service.
  */
 @Component
 public class LinuxProcessInspector {
@@ -22,40 +27,35 @@ public class LinuxProcessInspector {
         this.monitorProperties = monitorProperties;
     }
 
-    public boolean isRunning(HostConfig host, String processMatch) {
-        return findFirst(host, processMatch).isPresent();
-    }
-
-    public Optional<ProcessInfo> findFirst(HostConfig host, String processMatch) {
+    /**
+     * Captures the full list of running processes on a host in a single command.
+     *
+     * <p>The {@code -ww} flag disables column-width truncation so long Java command
+     * lines (which carry the jar name used for matching) are returned in full. A
+     * failed command yields an {@link ProcessSnapshot#unavailable() unavailable}
+     * snapshot rather than an exception.
+     *
+     * @param host target host
+     * @return snapshot of live processes, matched locally per service
+     */
+    public ProcessSnapshot snapshot(HostConfig host) {
         CommandExecutor.CommandResult result = hostShellExecutor.execute(
                 host,
-                "pgrep -af \"" + escapeDoubleQuoted(processMatch) + "\"",
+                "ps -ww -eo pid=,args=",
                 monitorProperties.getCommand().getProcessLookupTimeout()
         );
 
         if (!result.success() || result.output() == null || result.output().isBlank()) {
-            return Optional.empty();
+            return ProcessSnapshot.unavailable();
         }
 
-        return result.output().lines()
+        List<ProcessInfo> processes = result.output().lines()
                 .map(String::trim)
                 .filter(line -> !line.isBlank())
                 .map(this::parseProcessInfo)
                 .flatMap(Optional::stream)
-                .findFirst();
-    }
-
-    public boolean isPidRunning(HostConfig host, Long pid) {
-        if (pid == null || pid <= 0) {
-            return false;
-        }
-
-        CommandExecutor.CommandResult result = hostShellExecutor.execute(
-                host,
-                "kill -0 " + pid,
-                monitorProperties.getCommand().getPidCheckTimeout()
-        );
-        return result.success();
+                .toList();
+        return ProcessSnapshot.of(processes);
     }
 
     public CommandExecutor.CommandResult stop(HostConfig host,
@@ -103,10 +103,6 @@ public class LinuxProcessInspector {
         } catch (NumberFormatException e) {
             return Optional.empty();
         }
-    }
-
-    private String escapeDoubleQuoted(String value) {
-        return value.replace("\"", "\\\"");
     }
 
     private String shellQuote(String value) {

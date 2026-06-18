@@ -20,22 +20,26 @@ import java.time.Instant;
  * still executed on the remote host through {@code bash -lc} so process checks,
  * health checks, restart commands, and working-directory wrapping keep the same
  * shell semantics as the system SSH provider.
+ *
+ * <p>Sessions are borrowed from {@link JschSessionPool} and reused across commands;
+ * only the lightweight {@code exec} channel is opened and closed per command, while
+ * the underlying session (and its handshake cost) is shared.
  */
 @Component
 public class JschSshCommandProvider implements SshCommandProvider {
 
-    private final JschFacade jschFacade;
+    private final JschSessionPool sessionPool;
     private final MonitorProperties monitorProperties;
 
     /**
      * Creates a JSch-backed SSH command provider.
      *
-     * @param jschFacade adapter responsible for opening SSH sessions
+     * @param sessionPool pool that supplies reusable SSH sessions per host
      * @param monitorProperties global monitoring and SSH settings
      */
-    public JschSshCommandProvider(JschFacade jschFacade,
+    public JschSshCommandProvider(JschSessionPool sessionPool,
                                   MonitorProperties monitorProperties) {
-        this.jschFacade = jschFacade;
+        this.sessionPool = sessionPool;
         this.monitorProperties = monitorProperties;
     }
 
@@ -54,17 +58,35 @@ public class JschSshCommandProvider implements SshCommandProvider {
      */
     @Override
     public CommandExecutor.CommandResult execute(HostConfig host, String shellCommand, Duration timeout) {
-        Session session = null;
+        try {
+            return sessionPool.withSession(host, session -> runOnSession(session, shellCommand, timeout));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new CommandExecutor.CommandResult(-1, "", e.getMessage());
+        } catch (Exception e) {
+            return new CommandExecutor.CommandResult(-1, "", e.getMessage());
+        }
+    }
+
+    /**
+     * Runs one command on an already connected, pooled session.
+     *
+     * <p>Only the {@code exec} channel is opened and closed here; the session is
+     * owned by {@link JschSessionPool} and stays connected for the next command.
+     * Transport failures propagate so the pool can reopen the session and retry.
+     *
+     * @param session pooled SSH session
+     * @param shellCommand command body to run inside {@code bash -lc}
+     * @param timeout maximum command execution time
+     * @return exit code, stdout, and stderr captured from the channel
+     * @throws Exception when the channel cannot be opened or read
+     */
+    private CommandExecutor.CommandResult runOnSession(Session session, String shellCommand, Duration timeout)
+            throws Exception {
         ChannelExec channel = null;
         ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
-
         try {
-            session = jschFacade.openSession(
-                    host,
-                    monitorProperties.getSsh(),
-                    monitorProperties.getCommand().getSshConnectTimeout()
-            );
             channel = (ChannelExec) session.openChannel("exec");
             channel.setCommand("bash -lc " + shellQuote(shellCommand));
             InputStream outputStream = channel.getInputStream();
@@ -82,17 +104,9 @@ public class JschSshCommandProvider implements SshCommandProvider {
                     stdout.toString(StandardCharsets.UTF_8),
                     stderr.size() > 0 ? stderr.toString(StandardCharsets.UTF_8) : null
             );
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return new CommandExecutor.CommandResult(-1, stdout.toString(StandardCharsets.UTF_8), e.getMessage());
-        } catch (Exception e) {
-            return new CommandExecutor.CommandResult(-1, stdout.toString(StandardCharsets.UTF_8), e.getMessage());
         } finally {
             if (channel != null) {
                 channel.disconnect();
-            }
-            if (session != null) {
-                session.disconnect();
             }
         }
     }

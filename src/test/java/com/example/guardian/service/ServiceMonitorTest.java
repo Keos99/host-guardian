@@ -8,6 +8,7 @@ import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceRuntimeSnapshot;
 import com.example.guardian.notification.ChatNotifier;
 import com.example.guardian.repository.MonitoredServiceRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,10 +21,13 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -50,19 +54,27 @@ class ServiceMonitorTest {
     private ChatNotifier chatNotifier;
 
     private MonitorProperties monitorProperties;
+    private ExecutorService monitoringExecutor;
     private ServiceMonitor monitor;
 
     @BeforeEach
     void setUp() {
         monitorProperties = new MonitorProperties();
+        monitoringExecutor = Executors.newSingleThreadExecutor();
         monitor = new ServiceMonitor(
                 monitoredServiceRepository,
                 processInspector,
                 healthChecker,
                 hostShellExecutor,
                 monitorProperties,
-                chatNotifier
+                chatNotifier,
+                monitoringExecutor
         );
+    }
+
+    @AfterEach
+    void tearDown() {
+        monitoringExecutor.shutdownNow();
     }
 
     @Test
@@ -77,7 +89,7 @@ class ServiceMonitorTest {
         service.setLastKnownPid(null);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+        stubHealthy(service, true);
         when(monitoredServiceRepository.save(service)).thenReturn(service);
 
         monitor.checkAll();
@@ -101,34 +113,13 @@ class ServiceMonitorTest {
         service.setLastKnownPid(1111L);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessFound(service, 2222L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+        stubHealthy(service, true);
 
         monitor.checkAll();
 
         assertThat(service.getLastKnownPid()).isEqualTo(2222L);
         assertThat(monitor.getRuntimeSnapshot(1L).orElseThrow().lastKnownPid()).isEqualTo(2222L);
         verify(monitoredServiceRepository).save(service);
-    }
-
-    @Test
-    void checkAllUsesPidCheckAsAdditionalAvailabilitySignal() {
-        MonitoredService service = monitoredService(1);
-        service.setLastKnownPid(1234L);
-        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
-        when(processInspector.findFirst(service.getHost(), service.getProcessMatch()))
-                .thenReturn(Optional.of(new LinuxProcessInspector.ProcessInfo(1234L, "java -jar billing-api.jar")));
-        when(processInspector.isPidRunning(service.getHost(), 1234L)).thenReturn(false);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
-        when(hostShellExecutor.execute(eq(service.getHost()), eq(service.getStartCommand()), any()))
-                .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
-
-        monitor.checkAll();
-
-        ServiceRuntimeSnapshot snapshot = monitor.getRuntimeSnapshot(1L).orElseThrow();
-        assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.RESTARTING);
-        assertThat(snapshot.processRunning()).isFalse();
-        assertThat(snapshot.lastMessage()).isEqualTo("Start command executed successfully");
-        verify(hostShellExecutor, never()).execute(eq(service.getHost()), eq(service.getRestartCommand()), any());
     }
 
     @Test
@@ -144,7 +135,6 @@ class ServiceMonitorTest {
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.UP);
         assertThat(snapshot.healthCheckEnabled()).isFalse();
         assertThat(snapshot.healthCheckPassed()).isFalse();
-        verify(healthChecker, never()).isHealthy(any(), any(), any());
     }
 
     @Test
@@ -172,7 +162,7 @@ class ServiceMonitorTest {
         service.setManualRestartEnabled(true);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), "cd '/opt/billing' && ./start.sh", monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -194,7 +184,7 @@ class ServiceMonitorTest {
         service.setLastKnownPid(1234L);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), "./start.sh", monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -210,7 +200,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+        stubHealthy(service, true);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(1, "command output", " "));
 
@@ -228,7 +218,7 @@ class ServiceMonitorTest {
         service.setRestartCooldownSeconds(3600);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -245,10 +235,10 @@ class ServiceMonitorTest {
     }
 
     @Test
-    void checkAllMarksErrorWhenServiceCheckThrows() {
+    void checkAllMarksErrorWhenHostProbeThrows() {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
-        when(processInspector.findFirst(service.getHost(), service.getProcessMatch()))
+        when(processInspector.snapshot(service.getHost()))
                 .thenThrow(new IllegalStateException("process checker failed"));
 
         monitor.checkAll();
@@ -265,7 +255,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+        stubHealthy(service, true);
 
         monitor.refreshSingle(1L);
         assertThat(monitor.getRuntimeSnapshot(1L).orElseThrow().status()).isEqualTo(ServiceHealthStatus.UP);
@@ -295,7 +285,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getRestartCommand(), monitorProperties.getCommand().getRestartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "stopped", null));
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
@@ -316,7 +306,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -342,7 +332,6 @@ class ServiceMonitorTest {
         assertThat(snapshot.status()).isEqualTo(ServiceHealthStatus.UP);
         assertThat(snapshot.healthCheckEnabled()).isFalse();
         assertThat(snapshot.lastMessage()).isEqualTo("Restart skipped: health-check is not configured");
-        verify(healthChecker, never()).isHealthy(any(), any(), any());
         verify(hostShellExecutor, never()).execute(any(), any(), any());
     }
 
@@ -351,7 +340,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findById(1L)).thenReturn(Optional.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+        stubHealthy(service, true);
 
         monitor.restartNow(1L);
 
@@ -369,7 +358,7 @@ class ServiceMonitorTest {
         second.setMonitoringEnabled(false);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(first, second));
         stubProcessFound(first, 1234L);
-        when(healthChecker.isHealthy(first.getHost(), first.getHealthUrl(), first.getHealthTimeout())).thenReturn(true);
+        stubHealthy(first, true);
 
         monitor.checkAll();
 
@@ -384,7 +373,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
 
         monitor.checkAll();
 
@@ -399,8 +388,8 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout()))
-                .thenReturn(false, false, true);
+        when(healthChecker.batchHealthy(eq(service.getHost()), anyList()))
+                .thenReturn(Map.of(service.getId(), false), Map.of(service.getId(), false), Map.of(service.getId(), true));
 
         monitor.checkAll();
         monitor.checkAll();
@@ -418,7 +407,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessFound(service, 1234L);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(true);
+        stubHealthy(service, true);
 
         monitor.checkAll();
 
@@ -431,7 +420,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -446,7 +435,7 @@ class ServiceMonitorTest {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(1, null, "boom"));
 
@@ -465,7 +454,7 @@ class ServiceMonitorTest {
         service.setMaxRestartsInWindow(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -485,7 +474,7 @@ class ServiceMonitorTest {
         service.setRestartCooldownSeconds(3600);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
         stubProcessMissing(service);
-        when(healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout())).thenReturn(false);
+        stubHealthy(service, false);
         when(hostShellExecutor.execute(service.getHost(), service.getStartCommand(), monitorProperties.getCommand().getStartTimeout()))
                 .thenReturn(new CommandExecutor.CommandResult(0, "started", null));
 
@@ -499,7 +488,7 @@ class ServiceMonitorTest {
     void monitoringErrorIsReportedOncePerEpisode() {
         MonitoredService service = monitoredService(1);
         when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(service));
-        when(processInspector.findFirst(service.getHost(), service.getProcessMatch()))
+        when(processInspector.snapshot(service.getHost()))
                 .thenThrow(new IllegalStateException("process checker failed"));
 
         monitor.checkAll();
@@ -509,14 +498,35 @@ class ServiceMonitorTest {
                 .monitoringError(service, "Unexpected monitoring error: process checker failed");
     }
 
+    @Test
+    void checkAllProbesEachHostOnceAndChecksHostsIndependently() {
+        MonitoredService first = monitoredService(1);
+        MonitoredService second = monitoredService(2);
+        when(monitoredServiceRepository.findAllByOrderByNameAsc()).thenReturn(List.of(first, second));
+        stubProcessFound(first, 1234L);
+        stubHealthy(first, true);
+        when(processInspector.snapshot(second.getHost())).thenThrow(new IllegalStateException("host down"));
+
+        monitor.checkAll();
+
+        assertThat(monitor.getRuntimeSnapshot(1L).orElseThrow().status()).isEqualTo(ServiceHealthStatus.UP);
+        assertThat(monitor.getRuntimeSnapshot(2L).orElseThrow().status()).isEqualTo(ServiceHealthStatus.ERROR);
+        verify(processInspector, times(1)).snapshot(first.getHost());
+        verify(processInspector, times(1)).snapshot(second.getHost());
+    }
+
     private void stubProcessFound(MonitoredService service, long pid) {
-        when(processInspector.findFirst(service.getHost(), service.getProcessMatch()))
-                .thenReturn(Optional.of(new LinuxProcessInspector.ProcessInfo(pid, pid + " " + service.getProcessMatch())));
-        when(processInspector.isPidRunning(service.getHost(), pid)).thenReturn(true);
+        when(processInspector.snapshot(service.getHost())).thenReturn(ProcessSnapshot.of(
+                List.of(new LinuxProcessInspector.ProcessInfo(pid, "java -jar " + service.getProcessMatch()))));
     }
 
     private void stubProcessMissing(MonitoredService service) {
-        when(processInspector.findFirst(service.getHost(), service.getProcessMatch())).thenReturn(Optional.empty());
+        when(processInspector.snapshot(service.getHost())).thenReturn(ProcessSnapshot.of(List.of()));
+    }
+
+    private void stubHealthy(MonitoredService service, boolean healthy) {
+        when(healthChecker.batchHealthy(eq(service.getHost()), anyList()))
+                .thenReturn(Map.of(service.getId(), healthy));
     }
 
     private MonitoredService monitoredService(long id) {

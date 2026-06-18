@@ -36,6 +36,9 @@ notification:
 
 monitor:
   interval: 30s
+  # Number of hosts checked in parallel within one monitoring cycle. Hosts are
+  # independent, so the cycle fans out across them. Set to 1 for sequential checks.
+  concurrency: 8
   ssh:
     provider: system
     strict-host-key-checking: false

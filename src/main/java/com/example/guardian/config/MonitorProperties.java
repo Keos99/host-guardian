@@ -24,6 +24,7 @@ import java.time.Duration;
 public class MonitorProperties {
 
     private Duration interval = Duration.ofSeconds(30);
+    private int concurrency = 8;
     private Command command = new Command();
     private Ssh ssh = new Ssh();
 
@@ -43,6 +44,28 @@ public class MonitorProperties {
      */
     public void setInterval(Duration interval) {
         this.interval = interval;
+    }
+
+    /**
+     * Returns the maximum number of hosts checked in parallel within one cycle.
+     *
+     * <p>Hosts are independent, so a monitoring cycle fans out across hosts using a
+     * bounded thread pool of this size. A value of {@code 1} preserves fully
+     * sequential behaviour.
+     *
+     * @return parallelism degree for host checks
+     */
+    public int getConcurrency() {
+        return concurrency;
+    }
+
+    /**
+     * Sets the maximum number of hosts checked in parallel within one cycle.
+     *
+     * @param concurrency parallelism degree; values below {@code 1} are treated as {@code 1}
+     */
+    public void setConcurrency(int concurrency) {
+        this.concurrency = concurrency;
     }
 
     public Command getCommand() {

@@ -20,6 +20,13 @@ import java.util.function.Supplier;
 @Component
 public class JschFacade {
 
+    /**
+     * Keepalive probe interval for pooled sessions, in milliseconds. Chosen below
+     * the default monitoring interval so an idle session is not dropped by the
+     * remote SSH server between two monitoring cycles.
+     */
+    private static final int KEEP_ALIVE_INTERVAL_MS = 15_000;
+
     private final Supplier<JSch> jschFactory;
 
     /**
@@ -57,6 +64,7 @@ public class JschFacade {
 
         Session session = jsch.getSession(host.getSshUser(), host.getAddress(), host.getSshPort());
         session.setConfig("StrictHostKeyChecking", sshProperties.isStrictHostKeyChecking() ? "yes" : "no");
+        session.setServerAliveInterval(KEEP_ALIVE_INTERVAL_MS);
         session.connect(toTimeoutMillis(connectTimeout));
         return session;
     }

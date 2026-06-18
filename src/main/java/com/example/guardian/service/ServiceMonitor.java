@@ -1,5 +1,6 @@
 package com.example.guardian.service;
 
+import com.example.guardian.model.HostConfig;
 import com.example.guardian.model.MonitoredService;
 import com.example.guardian.model.ServiceHealthStatus;
 import com.example.guardian.model.ServiceState;
@@ -7,6 +8,7 @@ import com.example.guardian.model.ServiceRuntimeSnapshot;
 import com.example.guardian.notification.ChatNotifier;
 import com.example.guardian.repository.MonitoredServiceRepository;
 import com.example.guardian.config.MonitorProperties;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,10 +17,14 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Центральный сервис мониторинга, который проверяет состояние приложений
@@ -48,6 +54,7 @@ public class ServiceMonitor {
     private final HostShellExecutor hostShellExecutor;
     private final MonitorProperties monitorProperties;
     private final ChatNotifier chatNotifier;
+    private final ExecutorService monitoringExecutor;
 
     private final Map<Long, ServiceState> states = new ConcurrentHashMap<>();
 
@@ -59,40 +66,109 @@ public class ServiceMonitor {
      * @param healthChecker компонент для HTTP health-check
      * @param hostShellExecutor компонент для выполнения shell-команд на нужном хосте
      * @param chatNotifier компонент для оповещений в чат о событиях мониторинга
+     * @param monitoringExecutor пул для параллельной проверки хостов
      */
     public ServiceMonitor(MonitoredServiceRepository monitoredServiceRepository,
                           LinuxProcessInspector processInspector,
                           HttpHealthChecker healthChecker,
                           HostShellExecutor hostShellExecutor,
                           MonitorProperties monitorProperties,
-                          ChatNotifier chatNotifier) {
+                          ChatNotifier chatNotifier,
+                          @Qualifier("monitoringExecutor") ExecutorService monitoringExecutor) {
         this.monitoredServiceRepository = monitoredServiceRepository;
         this.processInspector = processInspector;
         this.healthChecker = healthChecker;
         this.hostShellExecutor = hostShellExecutor;
         this.monitorProperties = monitorProperties;
         this.chatNotifier = chatNotifier;
+        this.monitoringExecutor = monitoringExecutor;
     }
 
     /**
      * Выполняет один полный цикл проверки по всем сервисам из конфигурации.
      *
-     * <p>Ошибки обработки одного сервиса не должны останавливать мониторинг других,
-     * поэтому каждая проверка изолирована в собственном {@code try/catch}.
+     * <p>Сервисы группируются по хосту, и хосты проверяются параллельно через
+     * {@code monitoringExecutor}: хосты независимы, поэтому это главный источник
+     * ускорения для больших инсталляций. Внутри одного хоста работа
+     * последовательна — это сохраняет порядок recovery-действий и удерживает
+     * число одновременных SSH-каналов на хост в пределах одного.
+     *
+     * <p>Ошибки обработки одного сервиса или хоста не должны останавливать
+     * мониторинг остальных, поэтому каждая проверка изолирована в {@code try/catch}.
      */
     public void checkAll() {
+        Map<Long, List<MonitoredService>> servicesByHost = new LinkedHashMap<>();
         for (MonitoredService service : monitoredServiceRepository.findAllByOrderByNameAsc()) {
+            if (!service.isMonitoringEnabled()) {
+                markPaused(service);
+                continue;
+            }
+            servicesByHost.computeIfAbsent(service.getHost().getId(), k -> new ArrayList<>()).add(service);
+        }
+
+        if (servicesByHost.isEmpty()) {
+            return;
+        }
+
+        List<Callable<Void>> hostTasks = new ArrayList<>();
+        for (List<MonitoredService> hostServices : servicesByHost.values()) {
+            hostTasks.add(() -> {
+                checkHost(hostServices);
+                return null;
+            });
+        }
+
+        try {
+            monitoringExecutor.invokeAll(hostTasks);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Monitoring cycle was interrupted before all hosts were checked");
+        }
+    }
+
+    /**
+     * Проверяет все сервисы одного хоста: один снимок процессов и один батч
+     * health-check на хост, затем последовательная обработка каждого сервиса.
+     *
+     * @param hostServices сервисы одного хоста, включенные в мониторинг
+     */
+    private void checkHost(List<MonitoredService> hostServices) {
+        HostProbe probe;
+        try {
+            probe = probeHost(hostServices.get(0).getHost(), hostServices);
+        } catch (Exception e) {
+            log.error("Unexpected error while probing host {}", hostServices.get(0).getHost().getName(), e);
+            for (MonitoredService service : hostServices) {
+                markError(service, "Unexpected monitoring error: " + e.getMessage());
+            }
+            return;
+        }
+
+        for (MonitoredService service : hostServices) {
             try {
-                if (!service.isMonitoringEnabled()) {
-                    markPaused(service);
-                    continue;
-                }
-                checkOne(service, true);
+                checkOne(service, true, probe);
             } catch (Exception e) {
                 log.error("Unexpected error while checking service {}", service.getName(), e);
                 markError(service, "Unexpected monitoring error: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Собирает состояние хоста за минимум обращений: один снимок процессов и один
+     * пакетный health-check для сервисов с заданным health URL.
+     *
+     * @param host хост, состояние которого собирается
+     * @param hostServices сервисы этого хоста
+     * @return снимок процессов и карта результатов health-check по сервисам
+     */
+    private HostProbe probeHost(HostConfig host, List<MonitoredService> hostServices) {
+        ProcessSnapshot snapshot = processInspector.snapshot(host);
+        List<MonitoredService> withHealth = hostServices.stream()
+                .filter(this::hasHealthCheck)
+                .toList();
+        Map<Long, Boolean> health = healthChecker.batchHealthy(host, withHealth);
+        return new HostProbe(snapshot, health);
     }
 
     /**
@@ -110,10 +186,11 @@ public class ServiceMonitor {
      *
      * @param service конфигурация конкретного сервиса
      * @param allowRecoveryStart {@code true}, если текущая проверка может запустить отсутствующий сервис
+     * @param probe собранное состояние хоста (снимок процессов и результаты health-check)
      */
-    private void checkOne(MonitoredService service, boolean allowRecoveryStart) {
+    private void checkOne(MonitoredService service, boolean allowRecoveryStart, HostProbe probe) {
         ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
-        ServiceCheckResult checkResult = inspectService(service, state);
+        ServiceCheckResult checkResult = inspectService(service, state, probe);
 
         if (checkResult.serviceHealthy()) {
             log.debug("Service {} is OK", service.getName());
@@ -316,7 +393,7 @@ public class ServiceMonitor {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Service not found: " + serviceId));
         ServiceState state = states.computeIfAbsent(service.getId(), k -> new ServiceState());
-        ServiceCheckResult checkResult = inspectService(service, state);
+        ServiceCheckResult checkResult = inspectService(service, state, probeHost(service.getHost(), List.of(service)));
 
         if (!checkResult.processRunning()) {
             markUnhealthy(service, state, checkResult);
@@ -378,7 +455,7 @@ public class ServiceMonitor {
             markPaused(service);
             return;
         }
-        checkOne(service, true);
+        checkOne(service, true, probeHost(service.getHost(), List.of(service)));
     }
 
     /**
@@ -459,28 +536,35 @@ public class ServiceMonitor {
         return "Health-check failed";
     }
 
-    private ServiceCheckResult inspectService(MonitoredService service, ServiceState state) {
+    /**
+     * Derives the service availability result from the pre-collected host probe.
+     *
+     * <p>Process discovery and health checks were already performed once for the
+     * whole host, so this method only matches the snapshot and reads the batched
+     * health result. Presence in the snapshot already implies a live process, so
+     * no separate PID liveness probe is needed.
+     *
+     * @param service inspected service
+     * @param state runtime state updated with the latest values
+     * @param probe pre-collected host state
+     * @return availability result used by the recovery decision
+     */
+    private ServiceCheckResult inspectService(MonitoredService service, ServiceState state, HostProbe probe) {
         state.setLastCheckAt(Instant.now());
 
-        Optional<LinuxProcessInspector.ProcessInfo> foundProcess = processInspector.findFirst(
-                service.getHost(),
-                service.getProcessMatch()
-        );
+        Optional<LinuxProcessInspector.ProcessInfo> foundProcess =
+                probe.snapshot().findFirst(service.getProcessMatch());
         Long pid = resolveAndPersistPid(service, foundProcess);
-        boolean pidRunning = pid != null && processInspector.isPidRunning(service.getHost(), pid);
-        boolean processRunning = foundProcess.isPresent() && pidRunning;
+        boolean processRunning = foundProcess.isPresent();
         boolean healthCheckEnabled = hasHealthCheck(service);
-        boolean healthy = false;
-        if (healthCheckEnabled) {
-            healthy = healthChecker.isHealthy(service.getHost(), service.getHealthUrl(), service.getHealthTimeout());
-        }
+        boolean healthy = healthCheckEnabled && probe.health().getOrDefault(service.getId(), false);
 
         state.setProcessRunning(processRunning);
         state.setLastKnownPid(pid);
         state.setHealthCheckEnabled(healthCheckEnabled);
-        state.setHealthCheckPassed(healthCheckEnabled && healthy);
+        state.setHealthCheckPassed(healthy);
 
-        return new ServiceCheckResult(processRunning, healthCheckEnabled, healthCheckEnabled && healthy);
+        return new ServiceCheckResult(processRunning, healthCheckEnabled, healthy);
     }
 
     /**
@@ -603,5 +687,14 @@ public class ServiceMonitor {
      * @param windowExhausted {@code true}, если лимит рестартов внутри окна исчерпан
      */
     private record RecoveryPolicyDecision(boolean allowed, boolean windowExhausted) {
+    }
+
+    /**
+     * Состояние хоста, собранное за один проход и переиспользуемое всеми его сервисами.
+     *
+     * @param snapshot снимок процессов хоста
+     * @param health результаты health-check по идентификатору сервиса
+     */
+    private record HostProbe(ProcessSnapshot snapshot, Map<Long, Boolean> health) {
     }
 }
