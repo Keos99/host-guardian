@@ -70,10 +70,10 @@ public class WebhookChatProvider implements ChatProvider {
         }
 
         Map<String, String> payload = new LinkedHashMap<>();
-        payload.put("peer", properties.getPeer() != null ? properties.getPeer() : "");
+        payload.put("peer", message.peer() != null ? message.peer() : "");
         payload.put("status", message.status().getValue());
         payload.put("message", message.text());
-        payload.put("url", "");
+        payload.put("url", message.url() != null ? message.url() : "");
 
         try {
             restTemplate.postForEntity(properties.getUrl(), new HttpEntity<>(payload, headers), String.class);

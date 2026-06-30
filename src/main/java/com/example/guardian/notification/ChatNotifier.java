@@ -227,7 +227,8 @@ public class ChatNotifier {
      */
     private void dispatch(MessageStatus status, Supplier<String> textSupplier) {
         try {
-            ChatMessage message = new ChatMessage(status, textSupplier.get());
+            ChatMessage message = new ChatMessage(
+                    status, textSupplier.get(), properties.getPeer(), properties.getServiceUrl());
             notificationExecutor.execute(() -> {
                 try {
                     chatProvider.send(message);

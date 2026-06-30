@@ -23,6 +23,7 @@ public class NotificationProperties {
     private boolean enabled = true;
     private String url = "";
     private String peer = "";
+    private String serviceUrl = "";
     private String authHeaderName = "Authorization";
     private String authToken = "";
     private Duration connectTimeout = Duration.ofSeconds(5);
@@ -81,6 +82,27 @@ public class NotificationProperties {
      */
     public void setPeer(String peer) {
         this.peer = peer;
+    }
+
+    /**
+     * Returns the public link to this Host Guardian instance.
+     *
+     * <p>The value is sent as the {@code url} payload field so chat recipients can
+     * open the dashboard from the notification.
+     *
+     * @return Host Guardian service URL, or a blank string when not configured
+     */
+    public String getServiceUrl() {
+        return serviceUrl;
+    }
+
+    /**
+     * Sets the public link to this Host Guardian instance.
+     *
+     * @param serviceUrl Host Guardian service URL passed as the {@code url} payload field
+     */
+    public void setServiceUrl(String serviceUrl) {
+        this.serviceUrl = serviceUrl;
     }
 
     /**

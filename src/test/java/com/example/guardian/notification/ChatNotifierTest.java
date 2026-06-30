@@ -43,12 +43,14 @@ class ChatNotifierTest {
     @BeforeEach
     void setUp() {
         properties = new NotificationProperties();
+        properties.setPeer("ops-peer");
+        properties.setServiceUrl("http://guardian.local:8099");
         notifier = new ChatNotifier(chatProvider, properties, settings,
                 monitoredServiceRepository, Runnable::run);
     }
 
     @Test
-    void serviceDownSendsAlarmWithServiceHostAndReason() {
+    void serviceDownSendsAlarmWithServiceHostReasonPeerAndServiceUrl() {
         when(settings.isGlobalEnabled()).thenReturn(true);
         MonitoredService service = TestFixtures.service(1, TestFixtures.sshHost(1), null);
 
@@ -61,6 +63,8 @@ class ChatNotifierTest {
                 .contains("billing-api")
                 .contains("Remote host")
                 .contains("Process is missing");
+        assertThat(message.peer()).isEqualTo("ops-peer");
+        assertThat(message.url()).isEqualTo("http://guardian.local:8099");
     }
 
     @Test

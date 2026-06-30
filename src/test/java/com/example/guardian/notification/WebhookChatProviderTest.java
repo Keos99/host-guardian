@@ -39,7 +39,7 @@ class WebhookChatProviderTest {
     void blankUrlSwitchesToLogOnlyModeWithoutHttpCalls() {
         properties.setUrl(" ");
 
-        assertThatCode(() -> provider.send(new ChatMessage(MessageStatus.SUCCESS, "hello")))
+        assertThatCode(() -> provider.send(new ChatMessage(MessageStatus.SUCCESS, "hello", "peer-1", "http://guardian")))
                 .doesNotThrowAnyException();
 
         server.verify();
@@ -48,7 +48,6 @@ class WebhookChatProviderTest {
     @Test
     void postsLegacyCompatiblePayloadWithAuthHeader() {
         properties.setUrl(WEBHOOK_URL);
-        properties.setPeer("ops-channel-7");
         properties.setAuthToken("secret-token");
 
         server.expect(requestTo(WEBHOOK_URL))
@@ -58,10 +57,10 @@ class WebhookChatProviderTest {
                 .andExpect(jsonPath("$.peer").value("ops-channel-7"))
                 .andExpect(jsonPath("$.status").value("FAIL"))
                 .andExpect(jsonPath("$.message").value("Сервис недоступен"))
-                .andExpect(jsonPath("$.url").value(""))
+                .andExpect(jsonPath("$.url").value("http://guardian.local:8099"))
                 .andRespond(withSuccess());
 
-        provider.send(new ChatMessage(MessageStatus.FAIL, "Сервис недоступен"));
+        provider.send(new ChatMessage(MessageStatus.FAIL, "Сервис недоступен", "ops-channel-7", "http://guardian.local:8099"));
 
         server.verify();
     }
@@ -74,7 +73,7 @@ class WebhookChatProviderTest {
                 .andExpect(jsonPath("$.status").value("UNSTABLE"))
                 .andRespond(withSuccess());
 
-        provider.send(new ChatMessage(MessageStatus.UNSTABLE, "restarting"));
+        provider.send(new ChatMessage(MessageStatus.UNSTABLE, "restarting", "peer-1", "http://guardian"));
 
         server.verify();
     }
@@ -88,7 +87,7 @@ class WebhookChatProviderTest {
                 .andExpect(jsonPath("$.peer").value(""))
                 .andRespond(withSuccess());
 
-        provider.send(new ChatMessage(MessageStatus.OK, "ok"));
+        provider.send(new ChatMessage(MessageStatus.OK, "ok", "", ""));
 
         server.verify();
     }
@@ -99,7 +98,7 @@ class WebhookChatProviderTest {
 
         server.expect(requestTo(WEBHOOK_URL)).andRespond(withServerError());
 
-        assertThatThrownBy(() -> provider.send(new ChatMessage(MessageStatus.OK, "ok")))
+        assertThatThrownBy(() -> provider.send(new ChatMessage(MessageStatus.OK, "ok", "peer-1", "http://guardian")))
                 .isInstanceOf(ChatSendException.class)
                 .hasMessageContaining("webhook");
     }

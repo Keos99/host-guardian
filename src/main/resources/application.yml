@@ -29,6 +29,9 @@ notification:
     url: ""
     # Recipient identifier sent as the "peer" payload field.
     peer: ""
+    # Public link to this Host Guardian instance, sent as the "url" payload field
+    # so chat recipients can open the dashboard from the notification.
+    service-url: "http://localhost:8099"
     auth-header-name: Authorization
     auth-token: ""
     connect-timeout: 5s
