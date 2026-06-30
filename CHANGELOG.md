@@ -16,6 +16,7 @@
   - повторяющиеся алерты дедуплицируются: один эпизод недоступности дает одну пару сообщений «упал/восстановился», без спама каждые 30 секунд;
   - отправка асинхронная (отдельный поток `chat-notifier`), ошибки чата никогда не ломают цикл мониторинга и REST-операции;
   - транспорт — настраиваемый HTTP webhook (`notification.chat.url`), payload и допустимые значения `status` (`OK`, `FAIL`, `SUCCESS`, `FAILURE`, `UNSTABLE`, `NOT_BUILT`, `ABORTED`) совместимы со старым SberChat-отправителем (поля `peer`, `status`, `message`, `url`); провайдер принимает только эти статусы; при пустом URL сообщения пишутся в лог приложения;
+  - HTTP-клиент на Apache HttpClient с настраиваемым TLS (`notification.chat.ssl`): `TrustSelfSignedStrategy` для самоподписанных сертификатов, опциональный свой trust store (`trust-store-path`) и клиентский key store для mutual TLS (`key-store-path`);
   - конфигурация в `application.yml`: `notification.chat.enabled` (главный выключатель), `url`, `peer`, `auth-header-name`, `auth-token`, `connect-timeout`, `read-timeout`.
 - Добавлено управление оповещениями с dashboard:
   - глобальный переключатель «Оповещения: вкл/выкл» (хранится в БД, переживает рестарт; таблица `app_setting`);

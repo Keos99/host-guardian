@@ -33,6 +33,19 @@ notification:
     auth-token: ""
     connect-timeout: 5s
     read-timeout: 10s
+    ssl:
+      # Path to a custom trust store / certificate store for the webhook TLS.
+      # Leave blank to use the JVM default trust store. Self-signed certificates
+      # are always accepted (TrustSelfSignedStrategy).
+      trust-store-path: ""
+      trust-store-password: ""
+      trust-store-type: PKCS12
+      # Client key store for mutual TLS. Leave blank to send no client certificate.
+      # key-password falls back to key-store-password when blank.
+      key-store-path: ""
+      key-store-password: ""
+      key-store-type: PKCS12
+      key-password: ""
 
 monitor:
   interval: 30s

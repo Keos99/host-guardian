@@ -193,7 +193,7 @@ flowchart LR
 | JschSessionPool | Кэш долгоживущих SSH-сессий по хосту с keepalive и реконнектом; убирает SSH-хендшейк на каждую команду. | JschSshCommandProvider. | JschFacade, удаленный хост. |
 | monitoringExecutor | Пул потоков (`monitor.concurrency`) для параллельной проверки независимых хостов в одном цикле. | ServiceMonitor. | — (управление потоками). |
 | ChatNotifier | Подготовка текстов оповещений, гейтинг по трем переключателям и безопасная асинхронная передача сообщений провайдеру; слушает `ApplicationReadyEvent` для стартового сообщения. | ServiceMonitor, ConfigurationService, Spring events. | NotificationSettingsService, ChatProvider, выделенный поток `chat-notifier`. |
-| WebhookChatProvider | Реализация `ChatProvider`: POST JSON-payload на настроенный webhook с таймаутами и опциональным auth-заголовком; при пустом URL — log-only режим. | ChatNotifier (через интерфейс `ChatProvider`). | Чат-платформа по HTTP. |
+| WebhookChatProvider | Реализация `ChatProvider`: POST JSON-payload на настроенный webhook с таймаутами и опциональным auth-заголовком; при пустом URL — log-only режим. HTTP-клиент на Apache HttpClient с TLS из `notification.chat.ssl` (TrustSelfSignedStrategy, свой trust store, клиентский key store для mutual TLS). | ChatNotifier (через интерфейс `ChatProvider`). | Чат-платформа по HTTPS/HTTP. |
 | NotificationSettingsService | Хранение глобального runtime-переключателя оповещений в таблице `app_setting` с in-memory кэшем. | ChatNotifier, NotificationController, DashboardController. | AppSettingRepository. |
 | NotificationController | REST-управление глобальным переключателем; отклоняет изменения (409), когда функционал отключен конфигурацией. | REST-запросы `/api/notifications`. | NotificationProperties, NotificationSettingsService. |
 | Repositories/DB | Хранение persistent-конфигурации и настроек приложения. | Services. | H2/PostgreSQL. |
@@ -428,7 +428,8 @@ flowchart TB
 
 | Риск | Описание |
 |---|---|
-| Хранение SSH-секретов | Private key path хранится в конфигурации, но нет отдельного secret manager, шифрования секретов и управления passphrase. |
+| Хранение SSH-секретов | Private key path хранится в конфигурации, но нет отдельного secret manager, шифрования секретов и управления passphrase. То же относится к паролям trust/key store чат-нотификаций (`notification.chat.ssl.*`). |
+| Ослабленная проверка TLS чата | Webhook-клиент всегда принимает самоподписанные сертификаты (`TrustSelfSignedStrategy`). Для production рекомендуется задавать `trust-store-path` с доверенным CA, иначе MITM-сертификат, подписавший сам себя, будет принят. |
 | Отсутствие RBAC | Dashboard и API пока не имеют полноценной аутентификации и авторизации, что критично для production-доступа. |
 | Неперсистентное runtime-состояние | Последние статусы и история recovery-действий находятся в памяти и сбрасываются при restart Host Guardian. |
 | Нет audit trail | Изменения конфигурации хостов, групп и сервисов не фиксируются как отдельная история действий оператора. |

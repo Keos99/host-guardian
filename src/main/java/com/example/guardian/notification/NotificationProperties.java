@@ -27,6 +27,7 @@ public class NotificationProperties {
     private String authToken = "";
     private Duration connectTimeout = Duration.ofSeconds(5);
     private Duration readTimeout = Duration.ofSeconds(10);
+    private Ssl ssl = new Ssl();
 
     /**
      * Checks whether the notification feature is enabled at all.
@@ -152,5 +153,173 @@ public class NotificationProperties {
      */
     public void setReadTimeout(Duration readTimeout) {
         this.readTimeout = readTimeout;
+    }
+
+    /**
+     * Returns the TLS settings for the webhook HTTP client.
+     *
+     * @return TLS configuration
+     */
+    public Ssl getSsl() {
+        return ssl;
+    }
+
+    /**
+     * Sets the TLS settings for the webhook HTTP client.
+     *
+     * @param ssl TLS configuration
+     */
+    public void setSsl(Ssl ssl) {
+        this.ssl = ssl;
+    }
+
+    /**
+     * TLS settings for the webhook HTTP client.
+     *
+     * <p>The client always trusts self-signed certificates via
+     * {@code TrustSelfSignedStrategy}. When a trust store path is provided, that
+     * store supplies the trusted certificates (for example a corporate CA or a
+     * pinned self-signed certificate); otherwise the JVM default trust store is
+     * used, extended with the self-signed trust strategy.
+     *
+     * <p>An optional key store provides the client certificate and private key
+     * for mutual TLS, so the webhook can require client authentication. When no
+     * key store path is set, the client presents no certificate.
+     */
+    public static class Ssl {
+
+        private String trustStorePath = "";
+        private String trustStorePassword = "";
+        private String trustStoreType = "PKCS12";
+        private String keyStorePath = "";
+        private String keyStorePassword = "";
+        private String keyStoreType = "PKCS12";
+        private String keyPassword = "";
+
+        /**
+         * Returns the path to a custom trust store / certificate store.
+         *
+         * @return trust store path, or a blank string to use the JVM default store
+         */
+        public String getTrustStorePath() {
+            return trustStorePath;
+        }
+
+        /**
+         * Sets the path to a custom trust store / certificate store.
+         *
+         * @param trustStorePath trust store path; blank uses the JVM default store
+         */
+        public void setTrustStorePath(String trustStorePath) {
+            this.trustStorePath = trustStorePath;
+        }
+
+        /**
+         * Returns the password used to open the trust store.
+         *
+         * @return trust store password, or a blank string when none is required
+         */
+        public String getTrustStorePassword() {
+            return trustStorePassword;
+        }
+
+        /**
+         * Sets the password used to open the trust store.
+         *
+         * @param trustStorePassword trust store password
+         */
+        public void setTrustStorePassword(String trustStorePassword) {
+            this.trustStorePassword = trustStorePassword;
+        }
+
+        /**
+         * Returns the trust store type.
+         *
+         * @return key store type, for example {@code PKCS12} or {@code JKS}
+         */
+        public String getTrustStoreType() {
+            return trustStoreType;
+        }
+
+        /**
+         * Sets the trust store type.
+         *
+         * @param trustStoreType key store type, for example {@code PKCS12} or {@code JKS}
+         */
+        public void setTrustStoreType(String trustStoreType) {
+            this.trustStoreType = trustStoreType;
+        }
+
+        /**
+         * Returns the path to the client key store used for mutual TLS.
+         *
+         * @return key store path, or a blank string when client authentication is not used
+         */
+        public String getKeyStorePath() {
+            return keyStorePath;
+        }
+
+        /**
+         * Sets the path to the client key store used for mutual TLS.
+         *
+         * @param keyStorePath key store path; blank disables client authentication
+         */
+        public void setKeyStorePath(String keyStorePath) {
+            this.keyStorePath = keyStorePath;
+        }
+
+        /**
+         * Returns the password used to open the key store.
+         *
+         * @return key store password, or a blank string when none is required
+         */
+        public String getKeyStorePassword() {
+            return keyStorePassword;
+        }
+
+        /**
+         * Sets the password used to open the key store.
+         *
+         * @param keyStorePassword key store password
+         */
+        public void setKeyStorePassword(String keyStorePassword) {
+            this.keyStorePassword = keyStorePassword;
+        }
+
+        /**
+         * Returns the key store type.
+         *
+         * @return key store type, for example {@code PKCS12} or {@code JKS}
+         */
+        public String getKeyStoreType() {
+            return keyStoreType;
+        }
+
+        /**
+         * Sets the key store type.
+         *
+         * @param keyStoreType key store type, for example {@code PKCS12} or {@code JKS}
+         */
+        public void setKeyStoreType(String keyStoreType) {
+            this.keyStoreType = keyStoreType;
+        }
+
+        /**
+         * Returns the password protecting the private key entry.
+         *
+         * @return key password, or a blank string to reuse the key store password
+         */
+        public String getKeyPassword() {
+            return keyPassword;
+        }
+
+        /**
+         * Sets the password protecting the private key entry.
+         *
+         * @param keyPassword key password; blank reuses the key store password
+         */
+        public void setKeyPassword(String keyPassword) {
+            this.keyPassword = keyPassword;
+        }
     }
 }

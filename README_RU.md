@@ -282,6 +282,14 @@ notification:
     auth-token: ""
     connect-timeout: 5s
     read-timeout: 10s
+    ssl:
+      trust-store-path: ""      # свой trust store; пусто = JVM default + TrustSelfSignedStrategy
+      trust-store-password: ""
+      trust-store-type: PKCS12
+      key-store-path: ""        # клиентский key store для mutual TLS; пусто = без клиентского сертификата
+      key-store-password: ""
+      key-store-type: PKCS12
+      key-password: ""          # пусто = берётся key-store-password
 
 monitor:
   interval: 30s
@@ -371,6 +379,8 @@ Host Guardian умеет отправлять сообщения о событи
 ```
 
 Набор полей и допустимые значения `status` (`OK`, `FAIL`, `SUCCESS`, `FAILURE`, `UNSTABLE`, `NOT_BUILT`, `ABORTED`) совместимы со старым SberChat-отправителем: провайдер принимает только эти статусы. Достаточно указать `url` и `peer`, чтобы переиспользовать существующий endpoint. Если `url` пуст, сообщения пишутся в лог приложения (log-only режим). Отправка выполняется асинхронно в отдельном потоке, поэтому медленный или недоступный чат не влияет на цикл мониторинга и REST-операции.
+
+HTTP-клиент построен на Apache HttpClient. TLS настраивается через `notification.chat.ssl`: самоподписанные сертификаты принимаются всегда (`TrustSelfSignedStrategy`); `trust-store-path` задаёт свой trust store (например, корпоративный CA), а `key-store-path` — клиентский сертификат для mutual TLS. Пустые пути означают JVM default trust store и отсутствие клиентского сертификата соответственно.
 
 ### Три уровня отключения
 

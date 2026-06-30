@@ -288,6 +288,14 @@ notification:
     auth-token: ""
     connect-timeout: 5s
     read-timeout: 10s
+    ssl:
+      trust-store-path: ""      # custom trust store; blank = JVM default + TrustSelfSignedStrategy
+      trust-store-password: ""
+      trust-store-type: PKCS12
+      key-store-path: ""        # client key store for mutual TLS; blank = no client certificate
+      key-store-password: ""
+      key-store-type: PKCS12
+      key-password: ""          # blank = falls back to key-store-password
 
 monitor:
   interval: 30s
@@ -381,6 +389,8 @@ Messages are POSTed to `notification.chat.url` as JSON:
 ```
 
 The field set and the allowed `status` values (`OK`, `FAIL`, `SUCCESS`, `FAILURE`, `UNSTABLE`, `NOT_BUILT`, `ABORTED`) are compatible with the legacy SberChat sender, which accepts only those status codes. An existing endpoint can be reused by configuring `url` and `peer` only. With a blank `url` messages go to the application log (log-only mode). Delivery is asynchronous on a dedicated thread, so a slow or unreachable chat never affects the monitoring loop or REST operations.
+
+The HTTP client is backed by Apache HttpClient. TLS is configured through `notification.chat.ssl`: self-signed certificates are always accepted (`TrustSelfSignedStrategy`); `trust-store-path` supplies a custom trust store (for example a corporate CA), and `key-store-path` supplies a client certificate for mutual TLS. Blank paths mean the JVM default trust store and no client certificate respectively.
 
 ### Three switch-off levels
 
